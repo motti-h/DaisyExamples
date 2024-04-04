@@ -1,80 +1,48 @@
 #include "daisy_patch.h"
 #include "daisysp.h"
+#include "looper.h"
 #include <string>
 
 using namespace daisy;
 using namespace daisysp;
+using namespace synthux;
 
-#define NUM_VOICES 32
-#define MAX_DELAY ((size_t)(10.0f * 48000.0f))
 #define DAC_MAX 4095.f
+
+// // Setup pins
+// static const int record_pin      = D(S30);
+// static const int loop_start_pin  = A(S31);
+// static const int loop_length_pin = A(S32);
+// static const int pitch_pin       = A(S33);
+
+static const float kKnobMax = 1023;
+
+// Allocate buffer in SDRAM 
+static const uint32_t kBufferLengthSec = 5;
+static const uint32_t kSampleRate = 48000;
+static const size_t kBufferLenghtSamples = kBufferLengthSec * kSampleRate;
+static float DSY_SDRAM_BSS buffer[kBufferLenghtSamples];
+
+static synthux::Looper looper;
+static PitchShifter pitch_shifter;
 
 // Hardware
 DaisyPatch hw;
-int encoder=0;
-float ctrl1;
-// Persistent filtered Value for smooth delay time changes.
-float smooth_time;
-std::vector<float> notesVector;
-
-std::vector<float> sika_voltages_one_octave = {0.000f, 0.087f, 0.252f, 0.418f, 0.586f, 0.671f, 0.839f, 1.000f};
-std::vector<float> huseyni_voltages_one_octave = { 0.0, 0.125, 0.25, 0.41666, 0.583, 0.7083, 0.833, 1.0 };
-std::vector<float> huzam_voltages_one_octave = { 0.0, 3/24.f, 7/24.f, 9/24.f, 15/24.f, 17/24.f, 21/24.f, 1.0 };
-std::vector<float> rast_voltages_one_octave = { 0.0, 9/53.f, 17/53.f, 22/53.f, 29/53.f, 38/53.f, 46/53.f, 1.0 };
-std::vector<std::vector<float>> scales_one_octave = { huseyni_voltages_one_octave, huzam_voltages_one_octave, rast_voltages_one_octave };
-std::vector<std::string> scales_names = { "Huseyni", "Huzam", "Rast" };
-Parameter cvIn1;
-float valOut=0;
-float closestNote=0;
-
+Parameter loopStart, loopLength, pitch;
 void UpdateControls();
-
-float find_closest_sika_note(float input_voltage) {
-    // Determine the octave based on the input voltage
-    int octave = static_cast<int>(input_voltage);
-    float voltage_in_octave = input_voltage - octave;
-
-    // Generate the Sika voltages for the corresponding octave
-    std::vector<float> voltages;
-    for (float v : huseyni_voltages_one_octave) {
-        voltages.push_back(voltage_in_octave + v);
-    }
-
-    // Find the closest voltage within the octave
-    float min_diff = std::abs(voltage_in_octave - voltages[0]);
-    int closest_index = 0;
-
-    for (int i = 1; i < voltages.size(); i++) {
-        float diff = std::abs(voltage_in_octave - voltages[i]);
-        if (diff < min_diff) {
-            min_diff = diff;
-            closest_index = i;
-        }
-    }
-
-    return voltages[closest_index];
-}
 
 void AudioCallback(AudioHandle::InputBuffer  in,
                    AudioHandle::OutputBuffer out,
                    size_t                    size)
 {
-    float minDiff;
 
-    UpdateControls();
-    
-    // Quantize to semitones
-    closestNote = 0;
-    minDiff = std::abs(ctrl1);
-    for (auto note: notesVector) {
-        float diff = std::abs(note - ctrl1);
-        if (diff < minDiff) {
-            minDiff = diff;
-            closestNote = note;  
-        }
+    for (size_t i = 0; i < size; i++) {
+    auto looper_out = looper.Process(in[1][i]);
+    out[0][i] = out[1][i] = pitch_shifter.Process(looper_out);
     }
     
-    hw.seed.dac.WriteValue(DacHandle::Channel::ONE,static_cast<uint16_t>((DAC_MAX/5.f) * 1.083f * closestNote));
+    UpdateControls();
+
 }
 
 int main(void)
@@ -82,56 +50,40 @@ int main(void)
     // Init everything.
     hw.Init();
     hw.seed.StartLog(false);
-    cvIn1.Init(hw.controls[0], .3, 1, Parameter::LINEAR);
+    loopStart.Init(hw.controls[0], 0, 1, Parameter::LINEAR);
+    loopLength.Init(hw.controls[1], 0, 1, Parameter::EXPONENTIAL);
+    pitch.Init(hw.controls[2], 0, 1, Parameter::LINEAR);
     //briefly display the module name
-    std::string str  = "Quantizer1";
+    std::string str  = "Looper";
     char *      cstr = &str[0];
     hw.display.WriteString(cstr, Font_7x10, true);
     hw.display.Update();
     hw.DelayMs(1000);
-
-    //prepare notes values vector
-    //float noteValue = 0;
-    // while(noteValue<=1)
-    // {
-    //     notesArray.push_back(noteValue);
-    //     noteValue = noteValue + 1/(12.f*5);
-    // }
     
-    for(auto i = 0 ; i <= 4; ++i)
-    {
-        for(auto e: huseyni_voltages_one_octave)
-        {
-            notesVector.push_back((e/5.f)+i/5.f);
-        }
-    }
-        
     // Start the ADC and Audio Peripherals on the Hardware
     hw.StartAdc();
     hw.StartAudio(AudioCallback);
+
+ 
+  float sample_rate = hw.seed.AudioSampleRate();
+
+  // Setup looper
+  looper.Init(buffer, kBufferLenghtSamples);
+
+  // Setup pitch shifter
+  pitch_shifter.Init(sample_rate);
+
     for(;;)
     {
 
     System::Delay(10);
 
-    hw.display.Fill(false);
-    std::string str = "value: " + std::to_string(static_cast<uint32_t>(100*ctrl1));
-    char *      cstr = &str[0];
-    hw.display.SetCursor(0, 0);
-    hw.display.WriteString(cstr,Font_6x8,true);
-    
-    std::string str2 = "closest note: " + std::to_string(static_cast<uint32_t>((DAC_MAX/5.f)*closestNote));
-    char *      cstr2 = &str2[0];
-    hw.display.SetCursor(0, 9);
-    hw.display.WriteString(cstr2,Font_6x8,true);
+    // hw.display.Fill(false);
+    // std::string str = "value: " + std::to_string(static_cast<uint32_t>(100*cvIn1.Value()));
+    // char *      cstr = &str[0];
+    // hw.display.SetCursor(0, 0);
+    // hw.display.WriteString(cstr,Font_6x8,true);
 
-    
-    notesVector = scales_one_octave.at(encoder % scales_one_octave.size());
-
-    std::string str3 = "maqam: " + scales_names.at(encoder % scales_one_octave.size());
-    char *      cstr3 = &str3[0];
-    hw.display.SetCursor(0, 18);
-    hw.display.WriteString(cstr3,Font_6x8,true);
     hw.display.Update();
     }
 }
@@ -140,7 +92,15 @@ void UpdateControls()
 {
     hw.ProcessAllControls();
 
+    loopStart.Process();
+    loopLength.Process();
+    pitch.Process();
+      // Set loop parameters
+    auto loop_start = loopStart.Value(); //fmap(loopStart.Value() / kKnobMax, 0.f, 1.f);
+    auto loop_length = loopLength.Value();//fmap(loopLength.Value() / kKnobMax, 0.f, 1.f, Mapping::EXP);
+    looper.SetLoop(loop_start, loop_length);
+    looper.SetRecording(hw.encoder.Pressed());
     //knobs
-    ctrl1 = hw.GetKnobValue(DaisyPatch::CTRL_1);
-    encoder += abs(hw.encoder.Increment());
+    // ctrl1 = hw.GetKnobValue(DaisyPatch::CTRL_1);
+    // encoder += abs(hw.encoder.Increment());
 }
