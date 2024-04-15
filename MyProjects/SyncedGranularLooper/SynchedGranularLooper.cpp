@@ -1,11 +1,11 @@
 #include "daisy_patch.h"
 #include "daisysp.h"
-#include "looper.h"
+#include "samplerPlayer.h"
 #include <string>
 
 using namespace daisy;
 using namespace daisysp;
-using namespace synthux;
+using namespace sampler;
 
 #define DAC_MAX 4095.f
 
@@ -23,8 +23,7 @@ static const uint32_t kSampleRate = 48000;
 static const size_t kBufferLenghtSamples = kBufferLengthSec * kSampleRate;
 static float DSY_SDRAM_BSS buffer[kBufferLenghtSamples];
 
-static synthux::Looper looper;
-static PitchShifter pitch_shifter;
+static sampler::SamplerPlayer samplerPlayer;
 
 // Hardware
 DaisyPatch hw;
@@ -37,8 +36,11 @@ void AudioCallback(AudioHandle::InputBuffer  in,
 {
 
     for (size_t i = 0; i < size; i++) {
-    auto looper_out = looper.Process(in[1][i]);
-    out[0][i] = out[1][i] = pitch_shifter.Process(looper_out);
+    auto o = samplerPlayer.Process(in[1][i], 0);
+    out[0][i] = o[0];
+    out[1][i] = o[1];
+    
+    //out[0][i] = out[1][i] = pitch_shifter.Process(looper_out);
     }
     
     UpdateControls();
@@ -54,7 +56,7 @@ int main(void)
     loopLength.Init(hw.controls[1], 0, 1, Parameter::EXPONENTIAL);
     pitch.Init(hw.controls[2], 0, 1, Parameter::LINEAR);
     //briefly display the module name
-    std::string str  = "Looper";
+    std::string str  = "Sampler Player";
     char *      cstr = &str[0];
     hw.display.WriteString(cstr, Font_7x10, true);
     hw.display.Update();
@@ -68,10 +70,7 @@ int main(void)
   float sample_rate = hw.seed.AudioSampleRate();
 
   // Setup looper
-  looper.Init(buffer, kBufferLenghtSamples);
-
-  // Setup pitch shifter
-  pitch_shifter.Init(sample_rate);
+  samplerPlayer.Init(buffer, kBufferLenghtSamples);
 
     for(;;)
     {
@@ -98,8 +97,8 @@ void UpdateControls()
       // Set loop parameters
     auto loop_start = loopStart.Value(); //fmap(loopStart.Value() / kKnobMax, 0.f, 1.f);
     auto loop_length = loopLength.Value();//fmap(loopLength.Value() / kKnobMax, 0.f, 1.f, Mapping::EXP);
-    looper.SetLoop(loop_start, loop_length);
-    looper.SetRecording(hw.encoder.Pressed());
+    samplerPlayer.SetLoop(loop_start, loop_length);
+    samplerPlayer.SetRecording(hw.encoder.Pressed());
     //knobs
     // ctrl1 = hw.GetKnobValue(DaisyPatch::CTRL_1);
     // encoder += abs(hw.encoder.Increment());

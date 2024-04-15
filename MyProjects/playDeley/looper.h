@@ -1,6 +1,6 @@
 #pragma once
 
-namespace synthux {
+namespace sampler {
 
 class Looper {
   public:

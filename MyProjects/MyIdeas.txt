@@ -1,0 +1,2 @@
+1. cv looper tempo sync
+2. audio looper granular

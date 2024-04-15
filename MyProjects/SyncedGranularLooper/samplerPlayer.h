@@ -1,8 +1,8 @@
 #pragma once
 
-namespace synthux {
+namespace sampler {
 
-class Looper {
+class SamplerPlayer {
   public:
     void Init(float *buf, size_t length) {
       _buffer = buf;
@@ -14,7 +14,7 @@ class Looper {
     void SetRecording(bool is_rec_on) {
         //Initialize recording head position on start
         if (_rec_env_pos_inc <= 0 && is_rec_on) {
-            _rec_head = (_loop_start + _play_head) % _buffer_length; 
+            _rec_head = (_play_head) % _buffer_length; 
             _is_empty = false;
         }
         // When record switch changes state it effectively
@@ -39,7 +39,7 @@ class Looper {
       _is_loop_set = true;
     }
   
-    float Process(float in) {
+    std::vector<float> Process(float in, int channel) {
       // Calculate iterator position on the record level ramp.
       if (_rec_env_pos_inc > 0 && _rec_env_pos < kFadeLength
        || _rec_env_pos_inc < 0 && _rec_env_pos > 0) {
@@ -60,7 +60,7 @@ class Looper {
 
       // Playback from the buffer
       float attenuation = 1;
-      float output = 0;
+      std::vector<float> output = {0,0};
       //Calculate fade in/out
       if (_play_head < kFadeLength) {
         attenuation = static_cast<float>(_play_head) / static_cast<float>(kFadeLength);

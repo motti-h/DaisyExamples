@@ -1,8 +1,8 @@
 #pragma once
+#include "daisysp.h"
+namespace effects {
 
-namespace synthux {
-
-class Looper {
+class Deley {
   public:
     void Init(float *buf, size_t length) {
       _buffer = buf;
@@ -14,7 +14,7 @@ class Looper {
     void SetRecording(bool is_rec_on) {
         //Initialize recording head position on start
         if (_rec_env_pos_inc <= 0 && is_rec_on) {
-            _rec_head = (_loop_start + _play_head) % _buffer_length; 
+            _rec_head = (_play_head) % _buffer_length; 
             _is_empty = false;
         }
         // When record switch changes state it effectively
@@ -23,23 +23,8 @@ class Looper {
         // the recorded region.
         _rec_env_pos_inc = is_rec_on ? 1 : -1;
     }
-
-    void SetLoop(const float loop_start, const float loop_length) {
-      // Set the start of the next loop
-      _pending_loop_start = static_cast<size_t>(loop_start * (_buffer_length - 1));
-
-      // If the current loop start is not set yet, set it too
-      if (!_is_loop_set) _loop_start = _pending_loop_start;
-
-      // Set the length of the next loop
-      _pending_loop_length = std::max(kMinLoopLength, static_cast<size_t>(loop_length * _buffer_length));
-
-      //If the current loop length is not set yet, set it too
-      if (!_is_loop_set) _loop_length = _pending_loop_length;
-      _is_loop_set = true;
-    }
   
-    float Process(float in) {
+    std::vector<float> Process(float in, int channel, float delay) {
       // Calculate iterator position on the record level ramp.
       if (_rec_env_pos_inc > 0 && _rec_env_pos < kFadeLength
        || _rec_env_pos_inc < 0 && _rec_env_pos > 0) {
@@ -55,33 +40,43 @@ class Looper {
       }
       
       if (_is_empty) {
-        return 0;
+        output[0]=output[1]=0;
+        return output;
       }
 
       // Playback from the buffer
       float attenuation = 1;
-      float output = 0;
+      
       //Calculate fade in/out
       if (_play_head < kFadeLength) {
         attenuation = static_cast<float>(_play_head) / static_cast<float>(kFadeLength);
       }
-      else if (_play_head >= _loop_length - kFadeLength) {
-        attenuation = static_cast<float>(_loop_length - _play_head) / static_cast<float>(kFadeLength);
+      else if (_play_head >= _buffer_length - kFadeLength) {
+        attenuation = static_cast<float>(_buffer_length - _play_head) / static_cast<float>(kFadeLength);
       }
       
       // Read from the buffer
-      auto play_pos = (_loop_start + _play_head) % _buffer_length;
-      output = _buffer[play_pos] * attenuation;
+      auto play_pos = _play_head % _buffer_length;
+      output[0] = _buffer[play_pos] * attenuation;
 
+      if(abs(delayLast-delay) > 0.01)
+      {
+        delayLast = delay;
+        _attanuate_deley = 0;
+      }
+      if(_attanuate_deley <= kFadeLength)
+      {
+          attenuation = static_cast<float>(_attanuate_deley++) / static_cast<float>(kFadeLength);
+      }else
+      {
+          attenuation = 1.0;
+      }
+        
+      output[1] = _buffer[(play_pos + _buffer_length - static_cast<size_t>(delayLast*_buffer_length))%_buffer_length ]*attenuation;
       // Advance playhead
       _play_head ++;
-      if (_play_head >= _loop_length) {
-        _loop_start = _pending_loop_start;
-        _loop_length = _pending_loop_length;
-        _play_head = 0;
-      }
-      
-      return output * attenuation;
+      _play_head %= _buffer_length;
+      return output;
     }
 
   private:
@@ -91,17 +86,20 @@ class Looper {
     float* _buffer;
 
     size_t _buffer_length       = 0;
-    size_t _loop_length         = 0;
-    size_t _pending_loop_length = 0;
-    size_t _loop_start          = 0;
-    size_t _pending_loop_start  = 0;
 
     size_t _play_head = 0;
     size_t _rec_head  = 0;
+    
 
     size_t _rec_env_pos      = 0;
     int32_t _rec_env_pos_inc = 0;
     bool _is_empty  = true;
     bool _is_loop_set = false;
+
+    std::vector<float> output = {0,0};
+    float _deley = 0.0,delayLast=0.0;
+    size_t _attanuate_deley = 0;
+
+    
 };
 };
