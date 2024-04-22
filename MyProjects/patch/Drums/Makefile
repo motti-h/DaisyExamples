@@ -1,8 +1,8 @@
 # Project Name
-TARGET = MaqamQ
+TARGET = Drums
 
 # Sources
-CPP_SOURCES = MaqamQ.cpp
+CPP_SOURCES = Drums.cpp
 
 # Library Locations
 LIBDAISY_DIR = ../../../libDaisy/

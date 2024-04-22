@@ -17,9 +17,9 @@ float ctrl1;
 float smooth_time;
 std::vector<float> notesVector;
 
-std::vector<float> sika_voltages_one_octave = {0.000f, 0.087f, 0.252f, 0.418f, 0.586f, 0.671f, 0.839f, 1.000f};
-std::vector<float> huseyni_voltages_one_octave = { 0.0, 0.125, 0.25, 0.41666, 0.583, 0.7083, 0.833, 1.0 };
-std::vector<float> huzam_voltages_one_octave = { 0.0, 3/24.f, 7/24.f, 9/24.f, 15/24.f, 17/24.f, 21/24.f, 1.0 };
+std::vector<float> sika_voltages_one_octave = {0.000f, 0.087f, 0.252f, 0.418f, 0.586f, 0.671f, 0.839f, 1.000f, 1.087f, 1.252f, 1.418f, 1.586f, 1.671f, 1.839f, 2.000f};
+std::vector<float> huseyni_voltages_one_octave = { 0.0, 0.125, 0.25, 0.41666, 0.583, 0.7083, 0.833, 1.0, 1.125, 1.25, 1.41666, 1.583, 1.7083, 1.833, 2.0 };
+std::vector<float> huzam_voltages_one_octave = { 0.0, 3/24.f, 7/24.f, 9/24.f, 15/24.f, 17/24.f, 21/24.f, 1.0, 27/24.f, 31/24.f, 33/24.f, 38/24.f, 41/24.f, 45/24.f, 2.0 };
 std::vector<float> rast_voltages_one_octave = { 0.0, 9/53.f, 17/53.f, 22/53.f, 29/53.f, 38/53.f, 46/53.f, 1.0 };
 std::vector<std::vector<float>> scales_one_octave = { huseyni_voltages_one_octave, huzam_voltages_one_octave, rast_voltages_one_octave };
 std::vector<std::string> scales_names = { "Huseyni", "Huzam", "Rast" };
@@ -82,9 +82,9 @@ int main(void)
     // Init everything.
     hw.Init();
     hw.seed.StartLog(false);
-    cvIn1.Init(hw.controls[0], .3, 1, Parameter::LINEAR);
+    cvIn1.Init(hw.controls[0], 0, 1, Parameter::LINEAR);
     //briefly display the module name
-    std::string str  = "Quantizer1";
+    std::string str  = "Maqam Quantizer";
     char *      cstr = &str[0];
     hw.display.WriteString(cstr, Font_7x10, true);
     hw.display.Update();
@@ -141,6 +141,6 @@ void UpdateControls()
     hw.ProcessAllControls();
 
     //knobs
-    ctrl1 = hw.GetKnobValue(DaisyPatch::CTRL_1);
+    ctrl1 = hw.GetKnobValue(DaisyPatch::CTRL_1)*2;
     encoder += abs(hw.encoder.Increment());
 }
