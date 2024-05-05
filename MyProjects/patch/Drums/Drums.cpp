@@ -1,6 +1,7 @@
 #include "daisy_patch.h"
 #include "daisysp.h"
 #include <string>
+#include <algorithm>
 
 
 using namespace daisy;
@@ -12,6 +13,7 @@ DaisyPatch hw;
 
 // drums
 AnalogBassDrum bassDrum;
+Overdrive overDrive;
 
 // Persistent filtered Value for smooth delay time changes.
 float ctrl1,smooth_time,sampleRate,f0,fForDrive,volume;
@@ -28,7 +30,7 @@ void AudioCallback(AudioHandle::InputBuffer  in,
     UpdateControls();
     for(size_t i = 0; i < size; i++)
     {
-        out[0][i] = bassDrum.Process()*volume;
+        out[0][i] = bassDrum.Process()*volume;//overDrive.Process(bassDrum.Process())*volume;
     }
     
 
@@ -41,6 +43,7 @@ int main(void)
     hw.seed.StartLog(false);
     sampleRate = hw.AudioSampleRate();
     bassDrum.Init(sampleRate);
+    overDrive.Init();
     
     //briefly display the module name
     std::string str  = "Drums";
@@ -64,6 +67,13 @@ int main(void)
     }
 }
 
+// template<typename _Tp>
+// constexpr const _Tp&
+// clampMy(const _Tp& __val, const _Tp& __lo, const _Tp& __hi)
+// {
+//     __glibcxx_assert(!(__hi < __lo));
+//     return (__val < __lo) ? __lo : (__hi < __val) ? __hi : __val;
+// }
 void UpdateControls()
 {
     hw.ProcessAllControls();
@@ -79,20 +89,21 @@ void UpdateControls()
     }
         
 
-    attack_fm_amount = std::min(hw.GetKnobValue(DaisyPatch::CTRL_1)*4.0f ,1.0f);
-    
-    self_fm_amount = std::max(hw.GetKnobValue(DaisyPatch::CTRL_1)*4.0f - 1.0f ,0.0f);
-    
-    //drive = std::max(hw.GetKnobValue(DaisyPatch::CTRL_1)*2.0f - 1.0f, 0.0f)*std::max(1.0f-16.f*fForDrive, 0.0f);
-    drive = hw.GetKnobValue(DaisyPatch::CTRL_3);
-
-    volume = std::min(hw.GetKnobValue(DaisyPatch::CTRL_4)*8.f ,8.f);
-
+    attack_fm_amount =hw.GetKnobValue(DaisyPatch::CTRL_1);// std::min(hw.GetKnobValue(DaisyPatch::CTRL_1)*4.0f ,1.0f);
     bassDrum.SetAttackFmAmount(attack_fm_amount);
-    bassDrum.SetSelfFmAmount(self_fm_amount);
-    bassDrum.SetDecay(drive);
-    //bassDrum.SetAccent(drive);
 
+    self_fm_amount = hw.GetKnobValue(DaisyPatch::CTRL_2);// std::max(hw.GetKnobValue(DaisyPatch::CTRL_2)*4.0f - 1.0f ,0.0f);
+    bassDrum.SetSelfFmAmount(self_fm_amount);
+    //drive = std::max(hw.GetKnobValue(DaisyPatch::CTRL_1)*2.0f - 1.0f, 0.0f)*std::max(1.0f-16.f*fForDrive, 0.0f);
+    auto decay = hw.GetKnobValue(DaisyPatch::CTRL_3);
+    bassDrum.SetDecay(decay);
+    
+    auto accent = hw.GetKnobValue(DaisyPatch::CTRL_4);
+    bassDrum.SetAccent(accent);
+    
+    
+    //bassDrum.SetAccent(drive);
+    
     bassDrum.SetFreq(f0);
 
     if(hw.gate_input[0].Trig())
@@ -100,5 +111,12 @@ void UpdateControls()
         bassDrum.Trig();
     }
 
-    encoder += abs(hw.encoder.Increment());
+    // drive = std::max(hw.GetKnobValue(DaisyPatch::CTRL_3)-0.5f,0.3f);
+    // overDrive.SetDrive(drive);
+    //volume = std::min(hw.GetKnobValue(DaisyPatch::CTRL_4)*8.f ,8.f);
+    encoder += hw.encoder.Increment();
+    volume = DSY_CLAMP(encoder,0,10);
+
 }
+
+  
