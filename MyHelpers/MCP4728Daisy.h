@@ -66,12 +66,13 @@ public:
         //     wire_->write(lowByte(reg_[i].data));
         // }
         // return wire_->endTransmission();
+
         uint8_t transmit[2]; 
         transmit[0] = (uint8_t)CMD::FAST_WRITE | highByte(data);
 
         transmit[1] = lowByte(data);
 
-        auto result = i2c.TransmitBlocking(addr_,transmit,3*sizeof(uint8_t),100);
+        auto result = i2c.TransmitBlocking(addr_,transmit,3*sizeof(uint8_t),10);
         return result;
     }
 
@@ -108,25 +109,25 @@ public:
     //     }
     // }
 
-    // uint8_t analogWrite(uint16_t a, uint16_t b, uint16_t c, uint16_t d, bool b_eep = false)
-    // {
-    //     if (b_eep)
-    //     {
-    //         reg_[0].data = eep_[0].data = a;
-    //         reg_[1].data = eep_[1].data = b;
-    //         reg_[2].data = eep_[2].data = c;
-    //         reg_[3].data = eep_[3].data = d;
-    //         return seqWrite();
-    //     }
-    //     else
-    //     {
-    //         reg_[0].data = a;
-    //         reg_[1].data = b;
-    //         reg_[2].data = c;
-    //         reg_[3].data = d;
-    //         return fastWrite();
-    //     }
-    // }
+    uint8_t analogWrite(uint16_t a, uint16_t b, uint16_t c, uint16_t d, bool b_eep = false)
+    {
+        // if (b_eep)
+        // {
+        //     reg_[0].data = eep_[0].data = a;
+        //     reg_[1].data = eep_[1].data = b;
+        //     reg_[2].data = eep_[2].data = c;
+        //     reg_[3].data = eep_[3].data = d;
+        //     return seqWrite();
+        // }
+        // else
+        // {
+        //     reg_[0].data = a;
+        //     reg_[1].data = b;
+        //     reg_[2].data = c;
+        //     reg_[3].data = d;
+        //     return fastWrite();
+        // }
+    }
 
     // uint8_t selectVref(VREF a, VREF b, VREF c, VREF d)
     // {
