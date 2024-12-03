@@ -1,8 +1,8 @@
 # Project Name
-TARGET = PolyOsc
+TARGET = ChordMachine
 
 # Sources
-CPP_SOURCES = PolyOsc.cpp
+CPP_SOURCES = ChordMachine.cpp
 
 # Library Locations
 LIBDAISY_DIR = ../../libDaisy

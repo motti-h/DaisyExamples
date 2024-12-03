@@ -1,0 +1,122 @@
+#include "daisysp.h"
+//#include <string>
+#include "daisy_patch_sm.h"
+#include "../../../MyHelpers/I2CHandler.cpp" 
+#include "../../../MyHelpers/MCP4728Daisy.h" 
+#include "dev/oled_ssd130x.h"
+#include <random>
+
+using namespace daisy;
+using namespace daisysp;
+using namespace patch_sm;
+
+using MyOledDisplay = OledDisplay<SSD130xI2c128x64Driver>;
+
+#define DAC_MAX 4095.f
+#define SCALE_CV 819.2 
+
+DaisyPatchSM patch;
+
+#include <array>
+#include <memory>
+#include <string.h>
+
+using namespace daisy;
+
+// uint8_t output_buffer[8];
+#define BUFF_SIZE 8
+static uint8_t DMA_BUFFER_MEM_SECTION output_buffer[BUFF_SIZE];
+
+
+int main(void)
+{
+    //static DaisySeed seed;
+    
+    patch.Init();
+    patch.StartLog(true);
+    System::Delay(1000);
+
+    I2CHandle::Config _i2c_config;
+    _i2c_config.periph = I2CHandle::Config::Peripheral::I2C_1;
+    _i2c_config.speed  = I2CHandle::Config::Speed::I2C_400KHZ;
+    _i2c_config.mode   = I2CHandle::Config::Mode::I2C_MASTER;
+    _i2c_config.address = 0x60;
+    _i2c_config.pin_config.scl  = DaisyPatchSM::B7;
+    _i2c_config.pin_config.sda  =DaisyPatchSM::B8;
+    
+    // initialise the peripheral
+    I2CHandle _i2c;
+    _i2c.Init(_i2c_config);
+    int      nDevices = 0;
+    for(unsigned char address = 1; address < 127; address++)
+    {
+        uint8_t           testData = 0;
+        I2CHandle::Result i2cResult
+            = _i2c.TransmitBlocking(address, &testData, 1, 500);
+
+        if(i2cResult == I2CHandle::Result::OK)
+        {
+            int prAddress = (address < 16) ? 0 : address;
+            patch.PrintLine("I2C device found at address %x !", prAddress);
+            nDevices++;
+        }
+    }
+    if(nDevices == 0)
+        patch.PrintLine("No I2C devices found");
+    else
+        patch.PrintLine("done");
+
+
+    while(1) {}
+    while(1) {  
+        patch.PrintLine("Running..");
+
+        System::Delay(3000);
+
+        uint16_t channel_a_value {4000};
+        uint16_t channel_b_value {2000};
+        uint16_t channel_c_value {3000};
+        uint16_t channel_d_value {4095};
+
+        output_buffer[0] = static_cast<uint8_t>(channel_a_value >> 8);
+        output_buffer[1] = static_cast<uint8_t>(channel_a_value & 0xFF);
+        output_buffer[2] = static_cast<uint8_t>(channel_b_value >> 8);
+        output_buffer[3] = static_cast<uint8_t>(channel_b_value & 0xFF);
+        output_buffer[4] = static_cast<uint8_t>(channel_c_value >> 8);
+        output_buffer[5] = static_cast<uint8_t>(channel_c_value & 0xFF);
+        output_buffer[6] = static_cast<uint8_t>(channel_d_value >> 8);
+        output_buffer[7] = static_cast<uint8_t>(channel_d_value & 0xFF);
+        I2CHandle::Result i2cResult= _i2c.TransmitBlocking(0x64, output_buffer, 8, 1000);
+        if(i2cResult == I2CHandle::Result::OK) {
+            patch.PrintLine("OK TRANSMISSION 1");
+        }
+        I2CHandle::Result i2cResult_2= _i2c.TransmitBlocking(0x60, output_buffer, 8, 1000);
+        if(i2cResult_2 == I2CHandle::Result::OK) {
+            patch.PrintLine("OK TRANSMISSION 2");
+        }
+
+        System::Delay(3000);
+
+        uint16_t channel_a_value_2 {0};
+        uint16_t channel_b_value_2 {0};
+        uint16_t channel_c_value_2 {0};
+        uint16_t channel_d_value_2 {0};
+
+        output_buffer[0] = static_cast<uint8_t>(channel_a_value_2 >> 8);
+        output_buffer[1] = static_cast<uint8_t>(channel_a_value_2 & 0xFF);
+        output_buffer[2] = static_cast<uint8_t>(channel_b_value_2 >> 8);
+        output_buffer[3] = static_cast<uint8_t>(channel_b_value_2 & 0xFF);
+        output_buffer[4] = static_cast<uint8_t>(channel_c_value_2 >> 8);
+        output_buffer[5] = static_cast<uint8_t>(channel_c_value_2 & 0xFF);
+        output_buffer[6] = static_cast<uint8_t>(channel_d_value_2 >> 8);
+        output_buffer[7] = static_cast<uint8_t>(channel_d_value_2 & 0xFF);
+        I2CHandle::Result i2cResult_3= _i2c.TransmitBlocking(0x64, output_buffer, 8, 1000);
+        if(i2cResult_3 == I2CHandle::Result::OK) {
+            patch.PrintLine("OK TRANSMISSION 3");
+        }
+        I2CHandle::Result i2cResult_4= _i2c.TransmitBlocking(0x60, output_buffer, 8, 1000);
+        if(i2cResult_4 == I2CHandle::Result::OK) {
+            patch.PrintLine("OK TRANSMISSION 4");
+        }
+    }
+}
