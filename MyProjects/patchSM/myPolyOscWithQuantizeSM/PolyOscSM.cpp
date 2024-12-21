@@ -31,7 +31,8 @@ bool high=false;
 #define BUFF_SIZE 8
 static uint8_t DMA_BUFFER_MEM_SECTION output_buffer[BUFF_SIZE];
 float tone = (1.f/12.f), equalDevision = (1.f/7.f);
-
+//IOs
+Switch       button;
 //notes vectors of maqams
 std::vector<float> notesVector;
 std::vector<float> sika_voltages_one_octave = {0.000f, 0.087f, 0.252f, 0.418f, 0.586f, 0.671f, 0.839f, 1.000f, 1.087f, 1.252f, 1.418f, 1.586f, 1.671f, 1.839f, 2.000f};
@@ -41,7 +42,8 @@ std::vector<float> rast_voltages_2_octave = { 0.0, 2.f*tone, 3.5f*tone, 5.f*tone
 std::vector<float> hijaz_voltages_2_octave = { 0.0, 1.f*tone, 3.5f*tone, 5.f*tone, 7.f*tone, 8.f*tone, 11.f*tone, 1,1 + 1.f*tone,1 + 3.5f*tone,1 + 5.f*tone,1 + 7.f*tone,1 + 8.f*tone,1 + 11.f*tone, 2};
 std::vector<float> equal_Temprament = { 0.0, 1.f*equalDevision, 2.f*equalDevision, 3.f*equalDevision, 4.f*equalDevision, 5.f*equalDevision, 6.f*equalDevision, 1,1 + 1.f*equalDevision,1 + 2.f*equalDevision,1 + 3.f*equalDevision,1 + 4.f*equalDevision,1 + 5.f*equalDevision,1 + 6.f*equalDevision, 2};
 std::vector<std::vector<float>> scales_one_octave = { equal_Temprament/*, huzam_voltages_one_octave, rast_voltages_one_octave */};
-
+std::vector<std::vector<float>> scales{huseyni_voltages_one_octave,rast_voltages_2_octave,hijaz_voltages_2_octave};
+uint16_t scaleIndex = 0;
 //knobs
 float cvInArr[2];
 
@@ -85,7 +87,7 @@ int main(void)
     patch.Init(); // Initialize hardware (daisy seed, and patch)
     //patch.StartLog(true);
     samplerate = patch.AudioSampleRate();
-
+    button.Init(patch.D6);
     //oscillator
     // waveform   = 0;
     // final_wave = Oscillator::WAVE_POLYBLEP_TRI;
@@ -118,6 +120,13 @@ int main(void)
     int lastSendChannelA = 0, lastSendChannelB = 0;
     while(1)
     {
+        button.Debounce();
+        if(button.RisingEdge()){
+            scaleIndex++;
+            if(scaleIndex >= scales.size()){
+                scaleIndex = 0;
+            }
+        }
         cvInArr[0] = (patch.GetAdcValue(CV_1)+1.0)*2;
         cvInArr[1] = (patch.GetAdcValue(CV_2)+1.0)*2; 
         //patch.PrintLine("Print a float value: %d",  (int)(cvInArr[0]*100));
@@ -125,8 +134,8 @@ int main(void)
         int indexes[2] = {0,0};
         CalculateClosestNote(cvInArr,indexes);    
         //frequencies[0] = powf(2.f, closestNotes[0]) * 55; //Hz
-        uint16_t cvOut1 = ConvertNoteToDacValue(hijaz_voltages_2_octave[indexes[0]]);
-        uint16_t cvOut2 = ConvertNoteToDacValue(rast_voltages_2_octave[indexes[1]]);
+        uint16_t cvOut1 = ConvertNoteToDacValue(scales[scaleIndex][indexes[0]]);
+        uint16_t cvOut2 = ConvertNoteToDacValue(scales[scaleIndex][indexes[1]]);
         //patch.PrintLine("cv2 out value: %d",  cvOut2);
         if(cvOut1 != lastSendChannelA)
         {
