@@ -17,15 +17,20 @@ int waveform;
 int final_wave;
 
 float testval;
-
-std::vector<float> notesVector;
-
-std::vector<float> sika_voltages_one_octave = {0.000f, 0.087f, 0.252f, 0.418f, 0.586f, 0.671f, 0.839f, 1.000f, 1.087f, 1.252f, 1.418f, 1.586f, 1.671f, 1.839f, 2.000f};
-std::vector<float> huseyni_voltages_one_octave = { 0.0, 0.125, 0.25, 0.41666, 0.583, 0.7083, 0.833, 1.0, 1.125, 1.25, 1.41666, 1.583, 1.7083, 1.833, 2.0 };
-
-std::vector<std::vector<float>> scales_one_octave = { huseyni_voltages_one_octave/*, huzam_voltages_one_octave, rast_voltages_one_octave */};
-float closestNote=0;
-float closestNotes[4] = { 0.0 };
+float tone = (1.f/6.f), equalDevision = (1.f/7.f);
+std::vector<float> huseyni = { 0.0, 0.75f*tone, 1.5f*tone, 2.5f*tone, 3.5f*tone, 4.25f*tone, 5.f*tone, 1.0,1 + 0.75f*tone,1 + 1.5f*tone,1 + 2.5f*tone,1 + 3.5f*tone,1 + 4.25f*tone,1 + 5.f*tone, 2.0 };
+std::vector<float> rast = { 0.0, 1.f*tone, 1.75f*tone, 2.5f*tone, 3.5f*tone, 4.5f*tone, 5.25f*tone, 1,1 + 1.f*tone,1 + 1.75f*tone,1 + 2.5f*tone,1 + 3.5f*tone,1 + 4.5f*tone,1 + 5.25f*tone, 2};
+std::vector<float> hijaz = { 0.0, 0.5f*tone, 2.f*tone, 2.5f*tone, 3.5f*tone, 4.25f*tone, 5.f*tone, 1,1 + 0.5f*tone,1 + 2.f*tone,1 + 2.5f*tone,1 + 3.5f*tone,1 + 4.25f*tone,1 + 5.f*tone, 2};
+std::vector<float> suznak = { 0.0, 1.f*tone, 1.75f*tone, 2.5f*tone, 3.5f*tone, 4.0f*tone, 5.5f*tone, 1.0,1 + 1.f*tone,1 + 1.75f*tone,1 + 2.5f*tone,1 + 3.5f*tone,1 + 4.0f*tone,1 + 5.5f*tone, 2.0 };
+std::vector<float> huzam = { 0.0, 0.75f*tone, 1.75f*tone, 2.25f*tone, 3.75f*tone, 4.25f*tone, 5.25f*tone, 1.0,1 + 0.75f*tone,1 + 1.75f*tone,1 + 2.25f*tone,1 + 3.75f*tone,1 + 4.25f*tone,1 + 5.25f*tone, 2.0 };
+std::vector<float> equal_Temprament = { 0.0, 1.f*equalDevision, 2.f*equalDevision, 3.f*equalDevision, 4.f*equalDevision, 5.f*equalDevision, 6.f*equalDevision, 1,1 + 1.f*equalDevision,1 + 2.f*equalDevision,1 + 3.f*equalDevision,1 + 4.f*equalDevision,1 + 5.f*equalDevision,1 + 6.f*equalDevision, 2};
+std::vector<std::vector<float>> scales_one_octave = { equal_Temprament/*, huzam_voltages_one_octave, rast_voltages_one_octave */};
+std::vector<std::vector<float>> scales{huseyni,rast,hijaz,suznak,huzam};
+uint16_t scaleIndex = 0;
+void CalculateClosestNote(float* cvIn, int* indexes);
+uint16_t ConvertNoteToDacValue(float note);
+//knobs
+float cvInArr[2];
 
 void UpdateControls();
 
@@ -72,8 +77,6 @@ void UpdateOled();
 
 int main(void)
 {
-    notesVector = scales_one_octave.at(0);
-
     float samplerate;
     patch.Init(); // Initialize hardware (daisy seed, and patch)
     //patch.seed.StartLog(true);
@@ -88,7 +91,7 @@ int main(void)
     testval = 0.f;
     DacHandle::Config dac_cfg;
     dac_cfg.bitdepth   = DacHandle::BitDepth::BITS_12;
-    dac_cfg.buff_state = DacHandle::BufferState::DISABLED;
+    dac_cfg.buff_state = DacHandle::BufferState::ENABLED;
     dac_cfg.mode       = DacHandle::Mode::POLLING;
     dac_cfg.chn        = DacHandle::Channel::BOTH;
     patch.seed.dac.Init(dac_cfg);
@@ -97,6 +100,17 @@ int main(void)
     while(1)
     {
         UpdateOled();
+        cvInArr[0] = (patch.GetKnobValue(DaisyPatch::CTRL_1)+1.0)*2;
+        cvInArr[1] = (patch.GetKnobValue(DaisyPatch::CTRL_1)+1.0)*2; 
+        //patch.PrintLine("Print a float value: %d",  (int)(cvInArr[0]*100));
+        // Quantize to semitones
+        int indexes[2] = {0,0};
+        CalculateClosestNote(cvInArr,indexes);    
+        //frequencies[0] = powf(2.f, closestNotes[0]) * 55; //Hz
+        uint16_t cvOut1 = ConvertNoteToDacValue(scales[scaleIndex][indexes[0]]);
+        uint16_t cvOut2 = ConvertNoteToDacValue(scales[scaleIndex][indexes[1]]);
+        patch.seed.dac.WriteValue(daisy::DacHandle::Channel::ONE, 4096/5);
+        patch.seed.dac.WriteValue(daisy::DacHandle::Channel::TWO, 0);
     }
 }
 
@@ -125,56 +139,79 @@ void UpdateControls()
     patch.ProcessDigitalControls();
     patch.ProcessAnalogControls();
 
-    float minDiff;
+    // float minDiff;
 
-    //knobs
-    float ctrl[4];
-    float frequencies[4];
-    for(int i = 0; i < 4; i++)
-    {
-        ctrl[i] = patch.GetKnobValue((DaisyPatch::Ctrl)i);
-        // patch.seed.PrintLine("Print a float value:%.3f", ctrl[i]);
-    }
+    // //knobs
+    // float ctrl[4];
+    // float frequencies[4];
+    // for(int i = 0; i < 4; i++)
+    // {
+    //     ctrl[i] = patch.GetKnobValue((DaisyPatch::Ctrl)i);
+    //     // patch.seed.PrintLine("Print a float value:%.3f", ctrl[i]);
+    // }
 
-    for(int i = 0; i < 3; i++)
-    {
-        // Quantize to semitones
-        closestNote = 0;
-        minDiff = std::abs(ctrl[i]);
-        for (auto note: notesVector) 
-        {
-        float diff = std::abs(note - ctrl[i]);
-        if (diff < minDiff) 
-            {
-                minDiff = diff;
-                closestNote = note;  
-            }
-        }
-        closestNote += ctrl[3];//*5;
-        closestNotes[i] = closestNote;
-        frequencies[i] = powf(2.f, closestNote) * 55; //Hz
-    }
+    // for(int i = 0; i < 3; i++)
+    // {
+    //     // Quantize to semitones
+    //     closestNote = 0;
+    //     minDiff = std::abs(ctrl[i]);
+    //     for (auto note: notesVector) 
+    //     {
+    //     float diff = std::abs(note - ctrl[i]);
+    //     if (diff < minDiff) 
+    //         {
+    //             minDiff = diff;
+    //             closestNote = note;  
+    //         }
+    //     }
+    //     closestNote += ctrl[3];//*5;
+    //     // closestNotes[i] = closestNote;
+    //     frequencies[i] = powf(2.f, closestNote) * 55; //Hz
+    // }
 
     //write the quantized cv to cv output
     //scale note by 1.083f ???
     
     // patch.seed.dac.WriteValue(DacHandle::Channel::ONE,static_cast<uint16_t>(SCALE_CV * 1.05f * closestNotes[0]));
     // patch.seed.dac.WriteValue(DacHandle::Channel::TWO,static_cast<uint16_t>(SCALE_CV * 1.05f * closestNotes[1]));
-    patch.seed.dac.WriteValue(DacHandle::Channel::ONE,static_cast<uint16_t>(ctrl[0]*4095 ));
-    
-    testval = patch.GetKnobValue((DaisyPatch::Ctrl)2) * 5.f;
+    // 
+     
 
-    //encoder
-    waveform += patch.encoder.Increment();
-    waveform = (waveform % final_wave + final_wave) % final_wave;
 
     //Adjust oscillators based on inputs
-    for(int i = 0; i < 3; i++)
-    {
-        osc[i].SetFreq(frequencies[i]);
-        osc[i].SetWaveform((uint8_t)waveform);
-    }
+    // for(int i = 0; i < 3; i++)
+    // {
+    //     osc[i].SetFreq(frequencies[i]);
+    //     osc[i].SetWaveform((uint8_t)waveform);
+    // }
 
 
    
+}
+
+void CalculateClosestNote(float* cvIn, int* indexes){
+    float minDiff1 = cvIn[0], minDiff2 = cvIn[1];
+
+    for (auto index = 0; index < equal_Temprament.size(); ++index) 
+    {
+        float diff1 = std::abs(equal_Temprament[index] - cvIn[0]), diff2 = std::abs(equal_Temprament[index] - cvIn[1]);
+        if (diff1 < minDiff1) 
+            {
+                minDiff1 = diff1;
+                indexes[0] = index;
+                //closestNotes[0] = note;  
+            }
+
+        if (diff2 < minDiff2) 
+            {
+                minDiff2 = diff2;
+                indexes[1] = index;
+                //closestNotes[1] = note;  
+            }
+    }
+}
+
+
+uint16_t ConvertNoteToDacValue(float note){
+    return (note == 2.000f) ? (uint16_t)(note*1948+80) : (uint16_t)(note*2000);
 }
