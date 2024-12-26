@@ -9,6 +9,7 @@ int main(void)
 {
     /** Initialize the hardware */
     patch.Init();
+    int max=0;
     while(1)
     {
         /** Delay half a second */

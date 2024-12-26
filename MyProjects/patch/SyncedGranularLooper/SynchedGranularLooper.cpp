@@ -28,15 +28,21 @@ static sampler::SamplerPlayer samplerPlayer;
 // Hardware
 DaisyPatch hw;
 Parameter loopStart, loopLength, pitch;
+auto startOver = false;
 void UpdateControls();
 
 void AudioCallback(AudioHandle::InputBuffer  in,
                    AudioHandle::OutputBuffer out,
                    size_t                    size)
 {
-
+    
+    if(hw.gate_input[0].Trig() ){
+      startOver = true;
+    }else{
+      startOver = false;
+    }
     for (size_t i = 0; i < size; i++) {
-    auto o = samplerPlayer.Process(in[1][i], 0);
+    auto o = samplerPlayer.Process(in[1][i],startOver);
     out[0][i] = o[0];
     out[1][i] = o[1];
     

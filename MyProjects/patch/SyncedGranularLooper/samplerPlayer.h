@@ -12,7 +12,7 @@ class SamplerPlayer {
     }
 
     void SetRecording(bool is_rec_on) {
-        //Initialize recording head position on start
+        // Initialize recording head position on start
         if (_rec_env_pos_inc <= 0 && is_rec_on) {
             _rec_head = (_play_head) % _buffer_length; 
             _is_empty = false;
@@ -39,12 +39,13 @@ class SamplerPlayer {
       _is_loop_set = true;
     }
   
-    std::vector<float> Process(float in, int channel) {
+    std::vector<float> Process(float in, bool startOver) {
       // Calculate iterator position on the record level ramp.
       if (_rec_env_pos_inc > 0 && _rec_env_pos < kFadeLength
        || _rec_env_pos_inc < 0 && _rec_env_pos > 0) {
           _rec_env_pos += _rec_env_pos_inc;
       }
+
       // If we're in the middle of the ramp - record to the buffer.
       if (_rec_env_pos > 0) {
         // Calculate fade in/out
@@ -55,37 +56,38 @@ class SamplerPlayer {
       }
       
       if (_is_empty) {
-        return 0;
+        return {0, 0};
       }
 
       // Playback from the buffer
       float attenuation = 1;
-      std::vector<float> output = {0,0};
-      //Calculate fade in/out
+      std::vector<float> output = {0, 0};
+
+      // Calculate fade in/out
       if (_play_head < kFadeLength) {
         attenuation = static_cast<float>(_play_head) / static_cast<float>(kFadeLength);
-      }
-      else if (_play_head >= _loop_length - kFadeLength) {
+      } else if (_play_head >= _loop_length - kFadeLength) {
         attenuation = static_cast<float>(_loop_length - _play_head) / static_cast<float>(kFadeLength);
       }
-      
+
       // Read from the buffer
-      auto play_pos = (_loop_start + _play_head) % _buffer_length;
-      output = _buffer[play_pos] * attenuation;
+      size_t play_pos = (_loop_start + _play_head) % _buffer_length;  
+      output[0] = _buffer[play_pos] * attenuation;
+      output[1] = _buffer[play_pos] * attenuation;    
 
       // Advance playhead
-      _play_head ++;
+      _play_head++;
       if (_play_head >= _loop_length) {
         _loop_start = _pending_loop_start;
         _loop_length = _pending_loop_length;
         _play_head = 0;
       }
-      
-      return output * attenuation;
+
+      return output;
     }
 
   private:
-    static const size_t kFadeLength = 600;
+    static const size_t kFadeLength = 50;
     static const size_t kMinLoopLength = 2 * kFadeLength;
 
     float* _buffer;
@@ -104,4 +106,5 @@ class SamplerPlayer {
     bool _is_empty  = true;
     bool _is_loop_set = false;
 };
+
 };
