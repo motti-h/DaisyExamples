@@ -15,7 +15,7 @@ std::string waveNames[5];
 
 int waveform;
 int final_wave;
-
+int32_t bank;
 float testval;
 float tone = (1.f/6.f), equalDevision = (1.f/7.f);
 std::vector<float> huseyni = { 0.0, 0.75f*tone, 1.5f*tone, 2.5f*tone, 3.5f*tone, 4.25f*tone, 5.f*tone, 1.0,1 + 0.75f*tone,1 + 1.5f*tone,1 + 2.5f*tone,1 + 3.5f*tone,1 + 4.25f*tone,1 + 5.f*tone, 2.0 };
@@ -31,7 +31,7 @@ void CalculateClosestNote(float* cvIn, int* indexes);
 uint16_t ConvertNoteToDacValue(float note);
 //knobs
 float cvInArr[2];
-
+float frequency = 0.0f;
 void UpdateControls();
 
 static void AudioCallback(AudioHandle::InputBuffer  in,
@@ -94,23 +94,33 @@ int main(void)
     dac_cfg.buff_state = DacHandle::BufferState::ENABLED;
     dac_cfg.mode       = DacHandle::Mode::POLLING;
     dac_cfg.chn        = DacHandle::Channel::BOTH;
+    
     patch.seed.dac.Init(dac_cfg);
+
     patch.StartAdc();
     patch.StartAudio(AudioCallback);
     while(1)
     {
         UpdateOled();
-        cvInArr[0] = (patch.GetKnobValue(DaisyPatch::CTRL_1)+1.0)*2;
-        cvInArr[1] = (patch.GetKnobValue(DaisyPatch::CTRL_1)+1.0)*2; 
+        
+        cvInArr[0] = (patch.controls[DaisyPatch::CTRL_1].Value()*2);
+        cvInArr[1] = (patch.GetKnobValue(DaisyPatch::CTRL_2)+1.0)*2; 
         //patch.PrintLine("Print a float value: %d",  (int)(cvInArr[0]*100));
         // Quantize to semitones
         int indexes[2] = {0,0};
         CalculateClosestNote(cvInArr,indexes);    
-        //frequencies[0] = powf(2.f, closestNotes[0]) * 55; //Hz
-        uint16_t cvOut1 = ConvertNoteToDacValue(scales[scaleIndex][indexes[0]]);
-        uint16_t cvOut2 = ConvertNoteToDacValue(scales[scaleIndex][indexes[1]]);
-        patch.seed.dac.WriteValue(daisy::DacHandle::Channel::ONE, 4096/5);
-        patch.seed.dac.WriteValue(daisy::DacHandle::Channel::TWO, 0);
+        
+        uint16_t cvOut1 = ConvertNoteToDacValue(scales[bank][indexes[0]]);
+        uint16_t cvOut2 = ConvertNoteToDacValue(scales[bank][indexes[1]]);
+        patch.seed.dac.WriteValue(daisy::DacHandle::Channel::ONE, 819);
+        patch.seed.dac.WriteValue(daisy::DacHandle::Channel::TWO, 819*2);
+
+        frequency = powf(2.f, scales[bank][indexes[0]]+1) * 55; //Hz
+        for(auto i = 0; i < 4; i++) {
+            osc[i].SetFreq(frequency);
+        }
+        patch.DelayMs(2);
+        
     }
 }
 
@@ -138,7 +148,10 @@ void UpdateControls()
 {
     patch.ProcessDigitalControls();
     patch.ProcessAnalogControls();
-
+    bank += patch.encoder.Increment();
+    bank = bank % 4;
+    if(bank < 0 )bank = 0;
+    // bank = patch.encoder.RisingEdge() ? 0 : bank;
     // float minDiff;
 
     // //knobs
@@ -213,5 +226,6 @@ void CalculateClosestNote(float* cvIn, int* indexes){
 
 
 uint16_t ConvertNoteToDacValue(float note){
-    return (note == 2.000f) ? (uint16_t)(note*1948+80) : (uint16_t)(note*2000);
+    //return (note == 2.000f) ? (uint16_t)(note*1948+80) : (uint16_t)(note*2000);
+    return (uint16_t)(note*819);
 }

@@ -1,10 +1,14 @@
 #pragma once
 
+#include <vector>
+#include <algorithm>
+#include <cstring>
+
 namespace sampler {
 
 class SamplerPlayer {
   public:
-    void Init(float *buf, size_t length) {
+    void Init(float* buf, size_t length) {
       _buffer = buf;
       _buffer_length = length;
       // Reset buffer contents to zero
@@ -12,15 +16,10 @@ class SamplerPlayer {
     }
 
     void SetRecording(bool is_rec_on) {
-        // Initialize recording head position on start
         if (_rec_env_pos_inc <= 0 && is_rec_on) {
-            _rec_head = (_play_head) % _buffer_length; 
+            _rec_head = _play_head % _buffer_length; 
             _is_empty = false;
         }
-        // When record switch changes state it effectively
-        // sets ramp to rising/falling, providing a
-        // fade in/out in the beginning and at the end of 
-        // the recorded region.
         _rec_env_pos_inc = is_rec_on ? 1 : -1;
     }
 
@@ -28,18 +27,18 @@ class SamplerPlayer {
       // Set the start of the next loop
       _pending_loop_start = static_cast<size_t>(loop_start * (_buffer_length - 1));
 
-      // If the current loop start is not set yet, set it too
-      if (!_is_loop_set) _loop_start = _pending_loop_start;
-
       // Set the length of the next loop
       _pending_loop_length = std::max(kMinLoopLength, static_cast<size_t>(loop_length * _buffer_length));
 
-      //If the current loop length is not set yet, set it too
-      if (!_is_loop_set) _loop_length = _pending_loop_length;
       _is_loop_set = true;
     }
   
-    std::vector<float> Process(float in, bool startOver) {
+    float Process(float in, bool startOver) {
+      // Handle the startOver request
+      if (startOver) {
+        _play_head = 0;
+      }
+
       // Calculate iterator position on the record level ramp.
       if (_rec_env_pos_inc > 0 && _rec_env_pos < kFadeLength
        || _rec_env_pos_inc < 0 && _rec_env_pos > 0) {
@@ -48,38 +47,40 @@ class SamplerPlayer {
 
       // If we're in the middle of the ramp - record to the buffer.
       if (_rec_env_pos > 0) {
-        // Calculate fade in/out
         float rec_attenuation = static_cast<float>(_rec_env_pos) / static_cast<float>(kFadeLength);
         _buffer[_rec_head] = in * rec_attenuation + _buffer[_rec_head] * (1.f - rec_attenuation);
-        _rec_head ++;
+        _rec_head++;
         _rec_head %= _buffer_length;
       }
       
       if (_is_empty) {
-        return {0, 0};
+        return 0;
       }
 
-      // Playback from the buffer
-      float attenuation = 1;
-      std::vector<float> output = {0, 0};
+      // Smooth transition when loop start changes
+      if (_play_head == 0) {
+        _loop_start = _pending_loop_start;
+        _loop_length = _pending_loop_length;
+      }
 
-      // Calculate fade in/out
+      // Playback with smooth fades
+      float attenuation = 1.0f;
+      float output = 0.0f;
+
       if (_play_head < kFadeLength) {
-        attenuation = static_cast<float>(_play_head) / static_cast<float>(kFadeLength);
+        attenuation = static_cast<float>(_play_head) / kFadeLength;
       } else if (_play_head >= _loop_length - kFadeLength) {
-        attenuation = static_cast<float>(_loop_length - _play_head) / static_cast<float>(kFadeLength);
+        attenuation = static_cast<float>(_loop_length - _play_head) / kFadeLength;
       }
 
       // Read from the buffer
       size_t play_pos = (_loop_start + _play_head) % _buffer_length;  
-      output[0] = _buffer[play_pos] * attenuation;
-      output[1] = _buffer[play_pos] * attenuation;    
+      output = _buffer[play_pos] * attenuation;
 
       // Advance playhead
       _play_head++;
       if (_play_head >= _loop_length) {
-        _loop_start = _pending_loop_start;
-        _loop_length = _pending_loop_length;
+        // Reset the playhead to start a new loop
         _play_head = 0;
       }
 
