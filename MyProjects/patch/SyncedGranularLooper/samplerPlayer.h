@@ -87,8 +87,30 @@ class SamplerPlayer {
       return output;
     }
 
+    // New methods for accessing playback and loop information
+    size_t GetCurrentPosition() const {
+        return _play_head;
+    }
+
+    size_t GetLoopStartPosition() const {
+        return _loop_start;
+    }
+
+    size_t GetLoopEndPosition() const {
+        return (_loop_start + _loop_length) % _buffer_length;
+    }
+
+    size_t GetLoopLength() const { // New method
+        return _loop_length;
+    }
+
+    size_t GetBufferLength() const { // New method added
+        return _buffer_length;
+    }
+
+
   private:
-    static const size_t kFadeLength = 50;
+    static const size_t kFadeLength = 10;
     static const size_t kMinLoopLength = 2 * kFadeLength;
 
     float* _buffer;

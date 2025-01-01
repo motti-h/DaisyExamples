@@ -2,6 +2,9 @@
 #include "daisysp.h"
 #include "samplerPlayer.h"
 #include <string>
+#include <cstdlib> // For rand() and srand()
+#include <ctime>   // For time()
+
 
 using namespace daisy;
 using namespace daisysp;
@@ -24,13 +27,22 @@ static const size_t kBufferLenghtSamples = kBufferLengthSec * kSampleRate;
 static float DSY_SDRAM_BSS buffer[kBufferLenghtSamples];
 
 static sampler::SamplerPlayer samplerPlayer;
+// Structure to hold the dot positions
+struct Dot {
+    int x;
+    int y;
+};
+Dot sparklingDots[10];
+// GranularPlayer granularPlayer;
 // Hardware
 DaisyPatch hw;
 Parameter loopStart, loopLength, pitch, delayTimePS;
 auto startOver = false;
 bool recordOn = false;
-void UpdateControls();
+void UpdateControls();  
 void updateDisplay();
+void updateSparklingDots();
+void CalculateRMS(float* buffer, size_t bufferLength, float* rmsBuffer, size_t rmsBufferLength, size_t samplesPerChunk);
 void AudioCallback(AudioHandle::InputBuffer  in,
                    AudioHandle::OutputBuffer out,
                    size_t                    size)
@@ -76,11 +88,26 @@ int main(void)
   // Setup looper
   samplerPlayer.Init(buffer, kBufferLenghtSamples); 
   
-  for(;;)
-  {
-    System::Delay(10);
-    updateDisplay();
-  }
+      uint32_t lastUpdateTime = 0;
+    const uint32_t sparkleInterval = 100; // 100 milliseconds
+
+    // Initialize random seed
+    srand(static_cast<unsigned int>(time(nullptr)));
+
+    for (;;)
+    {
+        // Get the current time
+        uint32_t currentTime = hw.seed.system.GetNow();
+        if (currentTime - lastUpdateTime >= sparkleInterval)
+        {
+            lastUpdateTime = currentTime; // Update last update time
+            updateSparklingDots(); // Update random dot positions
+        }
+
+        updateDisplay();
+        System::Delay(10);
+    }
+
 }
 
 void UpdateControls()
@@ -102,17 +129,133 @@ void UpdateControls()
       samplerPlayer.SetRecording(recordOn);
 }
 
+// Function to generate new random sparkling dots
+void updateSparklingDots()
+{
+    for (int i = 0; i < 10; i++) // Generate new positions for 10 sparkling dots
+    {
+        sparklingDots[i].x = rand() % 128; // Random X position within display width
+        sparklingDots[i].y = rand() % 64;  // Random Y position within display height
+    }
+}
+// void CalculateRMS(float* buffer, size_t bufferLength, float* rmsBuffer, size_t rmsBufferLength, size_t samplesPerChunk)
+// {
+//     for (size_t i = 0; i < rmsBufferLength; i++)
+//     {
+//         size_t startSample = i * samplesPerChunk;
+//         if (startSample + samplesPerChunk <= bufferLength)
+//         {
+//             float sum = 0.0f;
+//             // Compute the sum of squares for RMS calculation
+//             for (size_t j = 0; j < samplesPerChunk; j++)
+//             {
+//                 float sample = buffer[startSample + j];
+//                 sum += sample * sample;
+//             }
+//             // Calculate RMS value
+//             rmsBuffer[i] = sqrtf(sum / samplesPerChunk);
+//         }
+//         else
+//         {
+//             rmsBuffer[i] = 0.0f; // If out of bounds, set RMS to 0
+//         }
+//     }
+// }
+
+// void updateDisplay()
+// {
+//     hw.display.Fill(false);
+//     hw.display.SetCursor(0,0);
+//     std::string str;
+//     if(recordOn){
+//       str="Recording: ON";
+//     }else{
+//       str="Recording: OFF";
+//     }
+//     char *      cstr = &str[0];
+//     hw.display.WriteString(cstr, Font_7x10, true);
+//     hw.display.Update();
+// }
+
 void updateDisplay()
 {
-    hw.display.Fill(false);
-    hw.display.SetCursor(0,0);
-    std::string str;
-    if(recordOn){
-      str="Recording: ON";
-    }else{
-      str="Recording: OFF";
+    hw.display.Fill(false); // Clear the display
+
+    // Constants for display dimensions
+    const int displayWidth = 128; // Width of the display
+    const int displayHeight = 64;  // Height of the display
+    int prev_x = 0;
+    int prev_y = displayHeight / 2; // Start drawing from the middle of the display
+
+    // Draw the waveform
+    for (int i = 0; i < displayWidth; i++)
+    {
+        size_t bufferIndex = i * (kBufferLenghtSamples / displayWidth); // Calculate buffer index
+        if (bufferIndex < kBufferLenghtSamples) // Ensure index is valid
+        {
+            float sample = buffer[bufferIndex]; // Get the sample from the buffer
+
+            // Normalize the sample assuming it ranges from -1 to 1
+            int y = displayHeight / 2 - static_cast<int>(sample * (displayHeight / 2)); // Center the waveform display
+
+            // Draw the line only if the y position is valid
+            if (y >= 0 && y < displayHeight) 
+            {
+                if (i > 0) 
+                {
+                    hw.display.DrawLine(prev_x, prev_y, i, y, true); // Draw line to visualize waveform
+                }
+                prev_x = i;
+                prev_y = y;
+            }
+        }
     }
-    char *      cstr = &str[0];
-    hw.display.WriteString(cstr, Font_7x10, true);
+
+    // Calculate the playhead position relative to loop start
+    size_t loopStartPos = samplerPlayer.GetLoopStartPosition();
+    size_t playheadPosition = (loopStartPos + samplerPlayer.GetCurrentPosition()) % samplerPlayer.GetBufferLength(); 
+    int playheadX = playheadPosition / (samplerPlayer.GetBufferLength() / displayWidth); // Adjust for display scaling
+
+    // Draw the playhead line
+    if (playheadX < displayWidth) // Ensure playhead line remains within display width
+    {
+        hw.display.DrawLine(playheadX, 0, playheadX, displayHeight, true); // Draw playhead
+    }
+
+    // Draw loop start and end markers
+    int loopStartX = loopStartPos / (samplerPlayer.GetBufferLength() / displayWidth);  
+    int loopEndX = (loopStartPos + samplerPlayer.GetLoopLength()) / (samplerPlayer.GetBufferLength() / displayWidth);
+
+    if (loopStartX < displayWidth) {
+        hw.display.DrawLine(loopStartX, 0, loopStartX, displayHeight, 1); // Loop start marker
+    }
+
+    if (loopEndX < displayWidth) {
+        hw.display.DrawLine(loopEndX, 0, loopEndX, displayHeight, 1); // Loop end marker
+    }
+
+    // Add random sparkling dots
+    for (int i = 0; i < 10; i++) // Draw 10 random dots
+    {
+        int dotX = sparklingDots[i].x;
+        int dotY = sparklingDots[i].y;
+        hw.display.DrawPixel(dotX, dotY, true); // Draw the dot
+    }
+
+    // Display recording state
+    hw.display.SetCursor(0, 0); // Set cursor position
+    std::string str;
+    if (recordOn)
+    {
+        str = "Record"; // Message when recording is ON
+    }
+    else
+    {
+        str = "Play"; // Message when recording is OFF
+    }
+    char* cstr = &str[0];
+    hw.display.WriteString(cstr, Font_7x10, true); // Display the recording status
+
+    // Update the display
     hw.display.Update();
 }
