@@ -31,6 +31,9 @@ bool high=false;
 #define BUFF_SIZE 8
 static uint8_t DMA_BUFFER_MEM_SECTION output_buffer[BUFF_SIZE];
 float tone = (1.f/6.f), equalDevision = (1.f/7.f);
+float coma = (1/9)*tone;
+std::vector<float> rastComa = { 0.0, 9*coma,16*coma, 22*coma, 31*coma, 40*coma, 47*coma, 1.0,1 + 9*coma,1 + 16*coma,1 + 22*coma,1 +31*coma,1 +40*coma,1 + 47*coma, 2.0 };
+
 //IOs
 Switch       button;
 //notes vectors of maqams
@@ -38,14 +41,14 @@ std::vector<float> sika_voltages_one_octave = {0.000f, 0.087f, 0.252f, 0.418f, 0
 
 std::vector<float> huzam_voltages_one_octave = { 0.0, 3/24.f, 7/24.f, 9/24.f, 15/24.f, 17/24.f, 21/24.f, 1.0, 27/24.f, 31/24.f, 33/24.f, 38/24.f, 41/24.f, 45/24.f, 2.0 };
 
-
+std::vector<float> iraq = { 0.0, 0.75f*tone, 1.75f*tone, 2.5f*tone, 3.25f*tone, 4.25f*tone, 5.25f*tone, 1.0,1 + 0.75f*tone,1 + 1.75f*tone,1 + 2.5f*tone,1 + 3.5f*tone,1 + 4.5f*tone,1 + 5.25f*tone, 2.0 };
 std::vector<float> huseyni = { 0.0, 0.75f*tone, 1.5f*tone, 2.5f*tone, 3.5f*tone, 4.25f*tone, 5.f*tone, 1.0,1 + 0.75f*tone,1 + 1.5f*tone,1 + 2.5f*tone,1 + 3.5f*tone,1 + 4.25f*tone,1 + 5.f*tone, 2.0 };
 std::vector<float> rast = { 0.0, 1.f*tone, 1.75f*tone, 2.5f*tone, 3.5f*tone, 4.5f*tone, 5.25f*tone, 1,1 + 1.f*tone,1 + 1.75f*tone,1 + 2.5f*tone,1 + 3.5f*tone,1 + 4.5f*tone,1 + 5.25f*tone, 2};
 std::vector<float> hijaz = { 0.0, 0.5f*tone, 2.f*tone, 2.5f*tone, 3.5f*tone, 4.25f*tone, 5.f*tone, 1,1 + 0.5f*tone,1 + 2.f*tone,1 + 2.5f*tone,1 + 3.5f*tone,1 + 4.25f*tone,1 + 5.f*tone, 2};
 std::vector<float> suznak = { 0.0, 1.f*tone, 1.75f*tone, 2.5f*tone, 3.5f*tone, 4.0f*tone, 5.5f*tone, 1.0,1 + 1.f*tone,1 + 1.75f*tone,1 + 2.5f*tone,1 + 3.5f*tone,1 + 4.0f*tone,1 + 5.5f*tone, 2.0 };
 std::vector<float> huzam = { 0.0, 0.75f*tone, 1.75f*tone, 2.25f*tone, 3.75f*tone, 4.25f*tone, 5.25f*tone, 1.0,1 + 0.75f*tone,1 + 1.75f*tone,1 + 2.25f*tone,1 + 3.75f*tone,1 + 4.25f*tone,1 + 5.25f*tone, 2.0 };
 std::vector<float> equal_Temprament = { 0.0, 1.f*equalDevision, 2.f*equalDevision, 3.f*equalDevision, 4.f*equalDevision, 5.f*equalDevision, 6.f*equalDevision, 1,1 + 1.f*equalDevision,1 + 2.f*equalDevision,1 + 3.f*equalDevision,1 + 4.f*equalDevision,1 + 5.f*equalDevision,1 + 6.f*equalDevision, 2};
-std::vector<std::vector<float>> scales{huseyni,rast,hijaz,suznak,huzam};
+std::vector<std::vector<float>> scales{huseyni,iraq,rast,hijaz/*,suznak,huzam*/};
 uint16_t scaleIndex = 0;
 //knobs
 float cvInArr[2];
