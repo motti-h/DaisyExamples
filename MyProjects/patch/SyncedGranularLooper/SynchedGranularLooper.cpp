@@ -12,12 +12,6 @@ using namespace sampler;
 
 #define DAC_MAX 4095.f
 
-// // Setup pins
-// static const int record_pin      = D(S30);
-// static const int loop_start_pin  = A(S31);
-// static const int loop_length_pin = A(S32);
-// static const int pitch_pin       = A(S33);
-
 static const float kKnobMax = 1023;
 
 // Allocate buffer in SDRAM 
@@ -36,7 +30,7 @@ Dot sparklingDots[10];
 // GranularPlayer granularPlayer;
 // Hardware
 DaisyPatch hw;
-Parameter loopStart, loopLength, pitch, delayTimePS;
+Parameter loopStart, loopLength;
 auto startOver = false;
 bool recordOn = false;
 void UpdateControls();  
@@ -69,8 +63,7 @@ int main(void)
   hw.seed.StartLog(false);
   loopStart.Init(hw.controls[0], 0, 1, Parameter::LINEAR);
   loopLength.Init(hw.controls[1], 0, 1, Parameter::EXPONENTIAL);
-  pitch.Init(hw.controls[2], 1, 24, Parameter::LINEAR);
-  delayTimePS.Init(hw.controls[3], 1, 500, Parameter::LINEAR);
+
   //briefly display the module name
   std::string str  = "Sampler Player";
   char *      cstr = &str[0];
@@ -116,7 +109,7 @@ void UpdateControls()
 
     loopStart.Process();
     loopLength.Process();
-    pitch.Process();
+
       // Set loop parameters
     auto loop_start = loopStart.Value(); //fmap(loopStart.Value() / kKnobMax, 0.f, 1.f);
     auto loop_length = loopLength.Value();//fmap(loopLength.Value() / kKnobMax, 0.f, 1.f, Mapping::EXP);
@@ -138,44 +131,6 @@ void updateSparklingDots()
         sparklingDots[i].y = rand() % 64;  // Random Y position within display height
     }
 }
-// void CalculateRMS(float* buffer, size_t bufferLength, float* rmsBuffer, size_t rmsBufferLength, size_t samplesPerChunk)
-// {
-//     for (size_t i = 0; i < rmsBufferLength; i++)
-//     {
-//         size_t startSample = i * samplesPerChunk;
-//         if (startSample + samplesPerChunk <= bufferLength)
-//         {
-//             float sum = 0.0f;
-//             // Compute the sum of squares for RMS calculation
-//             for (size_t j = 0; j < samplesPerChunk; j++)
-//             {
-//                 float sample = buffer[startSample + j];
-//                 sum += sample * sample;
-//             }
-//             // Calculate RMS value
-//             rmsBuffer[i] = sqrtf(sum / samplesPerChunk);
-//         }
-//         else
-//         {
-//             rmsBuffer[i] = 0.0f; // If out of bounds, set RMS to 0
-//         }
-//     }
-// }
-
-// void updateDisplay()
-// {
-//     hw.display.Fill(false);
-//     hw.display.SetCursor(0,0);
-//     std::string str;
-//     if(recordOn){
-//       str="Recording: ON";
-//     }else{
-//       str="Recording: OFF";
-//     }
-//     char *      cstr = &str[0];
-//     hw.display.WriteString(cstr, Font_7x10, true);
-//     hw.display.Update();
-// }
 
 void updateDisplay()
 {
@@ -194,16 +149,24 @@ void updateDisplay()
         if (bufferIndex < kBufferLenghtSamples) // Ensure index is valid
         {
             float sample = buffer[bufferIndex]; // Get the sample from the buffer
-
+            float avg = 0;
+            float max = 0;
+            for(auto x = 0; x < (kBufferLenghtSamples / displayWidth);x++){
+                avg += abs(sample);
+                
+            }
+            avg = (avg/(kBufferLenghtSamples / displayWidth))*(displayHeight);
+            
             // Normalize the sample assuming it ranges from -1 to 1
-            int y = displayHeight / 2 - static_cast<int>(sample * (displayHeight / 2)); // Center the waveform display
+            int y = static_cast<int>(sample * (displayHeight / 2)); // Center the waveform display
 
             // Draw the line only if the y position is valid
             if (y >= 0 && y < displayHeight) 
             {
                 if (i > 0) 
                 {
-                    hw.display.DrawLine(prev_x, prev_y, i, y, true); // Draw line to visualize waveform
+                    // hw.display.DrawPixel(i, y, true);
+                    hw.display.DrawLine(i, (displayHeight / 2)+avg, i, (displayHeight / 2)-avg, true); // Draw line to visualize waveform
                 }
                 prev_x = i;
                 prev_y = y;
@@ -234,13 +197,13 @@ void updateDisplay()
         hw.display.DrawLine(loopEndX, 0, loopEndX, displayHeight, 1); // Loop end marker
     }
 
-    // Add random sparkling dots
-    for (int i = 0; i < 10; i++) // Draw 10 random dots
-    {
-        int dotX = sparklingDots[i].x;
-        int dotY = sparklingDots[i].y;
-        hw.display.DrawPixel(dotX, dotY, true); // Draw the dot
-    }
+    // // Add random sparkling dots
+    // for (int i = 0; i < 10; i++) // Draw 10 random dots
+    // {
+    //     int dotX = sparklingDots[i].x;
+    //     int dotY = sparklingDots[i].y;
+    //     hw.display.DrawPixel(dotX, dotY, true); // Draw the dot
+    // }
 
     // Display recording state
     hw.display.SetCursor(0, 0); // Set cursor position
