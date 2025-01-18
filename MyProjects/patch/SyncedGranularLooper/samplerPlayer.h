@@ -108,6 +108,34 @@ class SamplerPlayer {
         return _buffer_length;
     }
 
+    // Function to detect onsets in a float buffer
+  std::vector<size_t> DetectOnsets(float threshold, size_t min_interval)
+  {
+      std::vector<size_t> onset_indices;
+      float prev_energy = 0.0f;
+
+      for(size_t i = 1; i < _buffer_length; ++i)
+      {
+          // Calculate the energy of the current sample
+          float energy = _buffer[i] * _buffer[i];
+          
+          // Check for a significant increase in energy
+          if(energy - prev_energy > threshold)
+          {
+              // If there's a significant increase in energy, we check if it's far enough from the last detected onset
+              if (onset_indices.empty() || (i - onset_indices.back() > min_interval))
+              {
+                  onset_indices.push_back(i);
+              }
+          }
+
+          // Update previous energy
+          prev_energy = energy;
+      }
+
+      return onset_indices;
+  }
+
 
   private:
     static const size_t kFadeLength = 10;
