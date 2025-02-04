@@ -83,6 +83,9 @@ float cvInArr[2];
 //for oscillator use
 float frequencies[4] = {0};
 
+
+
+
 int getRandomInt(int min, int max);
 void UpdateControls();
 void CalculateClosestNote(float* cvIn, int* indexes);
@@ -147,6 +150,15 @@ int main(void)
 
     //start
     patch.StartAdc();
+
+    
+    DacHandle::Config dac_config;
+    dac_config.mode     = DacHandle::Mode::DMA;
+    dac_config.bitdepth = DacHandle::BitDepth::BITS_12; /**< Sets the output value to 0-4095 */
+    dac_config.chn               = DacHandle::Channel::BOTH;
+    dac_config.buff_state        = DacHandle::BufferState::DISABLED;
+    dac_config.target_samplerate = 48000;
+    patch.dac.Init(dac_config);
     patch.StartDac();
     patch.StartAudio(AudioCallback);
     int lastSendChannelA = 0, lastSendChannelB = 0;
@@ -169,10 +181,15 @@ int main(void)
         //frequencies[0] = powf(2.f, closestNotes[0]) * 55; //Hz
         uint16_t cvOut1 = ConvertNoteToDacValue(scales[scaleIndex][indexes[0]]);
         uint16_t cvOut2 = ConvertNoteToDacValue(scales[scaleIndex][indexes[1]]);
+
+    
+        
         //patch.PrintLine("cv2 out value: %d",  cvOut2);
         if(cvOut1 != lastSendChannelA)
         {
             lastSendChannelA = cvOut1;
+            patch.WriteCvOut(CV_OUT_2, scales[scaleIndex][indexes[0]]);
+
             auto i2cResult = WriteMCP_Voltage(i2c_handle,cvOut1,lastSendChannelB);
             if (i2cResult != I2CHandle::Result::OK) 
             {
@@ -184,6 +201,8 @@ int main(void)
         if(cvOut2 != lastSendChannelB)
         {
             lastSendChannelB = cvOut2;
+            patch.WriteCvOut(CV_OUT_1, scales[scaleIndex][indexes[1]]);
+
             auto i2cResult = WriteMCP_Voltage(i2c_handle,lastSendChannelA,cvOut2);
             if (i2cResult != I2CHandle::Result::OK) 
             {
