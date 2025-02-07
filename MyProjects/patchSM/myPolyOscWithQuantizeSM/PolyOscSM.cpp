@@ -20,8 +20,8 @@ MCP4728 mcp;
 // Create a random device and seed it
 std::random_device rd;
 std::mt19937 gen(rd()); // Mersenne Twister generator
-
-Oscillator osc[3];
+#define NUM_OSCILLATORS 1
+Oscillator osc[NUM_OSCILLATORS];
 std::string waveNames[5];
 int waveform;
 int final_wave;
@@ -70,8 +70,8 @@ std::vector<float> hijaz = {
 std::vector<float> suznak = { 0.0, 1.f*tone, 1.75f*tone, 2.5f*tone, 3.5f*tone, 4.0f*tone, 5.5f*tone, 1.0,1 + 1.f*tone,1 + 1.75f*tone,1 + 2.5f*tone,1 + 3.5f*tone,1 + 4.0f*tone,1 + 5.5f*tone, 2.0 };
 std::vector<float> huzam = { 0.0, 0.75f*tone, 1.75f*tone, 2.25f*tone, 3.75f*tone, 4.25f*tone, 5.25f*tone, 1.0,1 + 0.75f*tone,1 + 1.75f*tone,1 + 2.25f*tone,1 + 3.75f*tone,1 + 4.25f*tone,1 + 5.25f*tone, 2.0 };
 std::vector<float> equal_Temprament = { 
-    0.0, 1.f*equalDevision, 2.f*equalDevision, 3.f*equalDevision, 4.f*equalDevision, 5.f*equalDevision, 6.f*equalDevision, 1,
-    1 + 1.f*equalDevision,1 + 2.f*equalDevision,1 + 3.f*equalDevision,1 + 4.f*equalDevision,1 + 5.f*equalDevision,1 + 6.f*equalDevision, 
+    0.0, 1.f*equalDevision, 2.f*equalDevision, 3.f*equalDevision, 4.f*equalDevision, 5.f*equalDevision, 6.f*equalDevision, 
+    1, 1 + 1.f*equalDevision,1 + 2.f*equalDevision,1 + 3.f*equalDevision,1 + 4.f*equalDevision,1 + 5.f*equalDevision,1 + 6.f*equalDevision, 
     2, 2 + 1.f*equalDevision,2 + 2.f*equalDevision,2 + 3.f*equalDevision,2 + 4.f*equalDevision,2 + 5.f*equalDevision,2 + 6.f*equalDevision, 
     3, 3 + 1.f*equalDevision,3 + 2.f*equalDevision,3 + 3.f*equalDevision,3 + 4.f*equalDevision,3 + 5.f*equalDevision,3 + 6.f*equalDevision, 4
     };
@@ -82,7 +82,14 @@ float cvInArr[2];
 
 //for oscillator use
 float frequencies[4] = {0};
+#define DAC_SCALE 0.98782
 
+//LFO
+Oscillator lfoOscillator;
+Parameter  lfoFreqCtrl;
+Parameter  lfoAmpCtrl;
+uint32_t lastTrigger = 0;
+// float bpm = 0;
 
 
 
@@ -96,23 +103,44 @@ I2CHandle::Result WriteMCP_Voltage(I2CHandle& i2c ,uint16_t chA,uint16_t chB);
 void writeVref(I2CHandle& i2c , I2CHandle::Config& config);
 void writeGain(I2CHandle& i2c , I2CHandle::Config& config);
 
+void SetupOsc(float samplerate);
+void SetupWaveNames();
+
 //audio callback
 static void AudioCallback(AudioHandle::InputBuffer  in,
                           AudioHandle::OutputBuffer out,
                           size_t                    size)
 {
     UpdateControls();
-    for(size_t i = 0; i < size; i++)
-    {
-        out[0][i] = in[0][i]; /**< Copy the left input to the left output */
-        out[1][i] = in[1][i]; /**< Copy the right input to the right output */
-    }
     // for(size_t i = 0; i < size; i++)
     // {
-    //     float sig = osc[0].Process();
-    //     OUT_L[i]  = sig;
-    //     OUT_R[i]  = sig;
+    //     out[0][i] = in[0][i]; /**< Copy the left input to the left output */
+    //     out[1][i] = in[1][i]; /**< Copy the right input to the right output */
     // }
+
+    //LFO
+    if(patch.gate_in_1.Trig()) {
+        auto now = patch.system.GetNow();
+        float t = (float)(now - lastTrigger)/1000.f;
+        float f = 1.f/(float)t;
+        lfoOscillator.SetFreq(f);
+        lastTrigger = now;
+    }
+    
+    if(patch.gate_in_2.Trig()) lfoOscillator.Reset();
+    for(size_t i = 0; i < size; i++)
+    {
+        float sig = osc[0].Process();
+        out[0][i]  = sig;
+        out[1][i]  = sig;
+
+        patch.WriteCvOut(CV_OUT_1, lfoOscillator.Process()+1);
+        patch.WriteCvOut(CV_OUT_2, lfoOscillator.Process()+1);
+    }
+
+    
+ 
+
    
 }
 int main(void)
@@ -123,11 +151,15 @@ int main(void)
     samplerate = patch.AudioSampleRate();
     button.Init(patch.D6);
     //oscillator
-    // waveform   = 0;
-    // final_wave = Oscillator::WAVE_POLYBLEP_TRI;
-    // SetupOsc(samplerate);
-    // SetupWaveNames();
+    waveform   = 0;
+    SetupOsc(samplerate);
+    SetupWaveNames();
 
+    //LFO
+    lfoOscillator.Init(samplerate);
+    lfoOscillator.SetAmp(1);
+    lfoOscillator.SetWaveform(lfoOscillator.WAVE_SIN);
+    lfoOscillator.SetFreq(1);//hz
     //i2c configuration
     I2CHandle::Config i2c_config;
     i2c_config.periph = I2CHandle::Config::Peripheral::I2C_1;
@@ -146,23 +178,22 @@ int main(void)
     patch.Delay(50);
 
     patch.PrintLine("DAC init OK");
-//
 
     //start
     patch.StartAdc();
 
-    
-    DacHandle::Config dac_config;
-    dac_config.mode     = DacHandle::Mode::DMA;
-    dac_config.bitdepth = DacHandle::BitDepth::BITS_12; /**< Sets the output value to 0-4095 */
-    dac_config.chn               = DacHandle::Channel::BOTH;
-    dac_config.buff_state        = DacHandle::BufferState::DISABLED;
-    dac_config.target_samplerate = 48000;
-    patch.dac.Init(dac_config);
+    //lfo
+    lastTrigger = patch.system.GetNow();
+    // DacHandle::Config dac_config;
+    // dac_config.mode     = DacHandle::Mode::DMA;
+    // dac_config.bitdepth = DacHandle::BitDepth::BITS_12; /**< Sets the output value to 0-4095 */
+    // dac_config.chn               = DacHandle::Channel::BOTH;
+    // dac_config.buff_state        = DacHandle::BufferState::DISABLED;
+    // dac_config.target_samplerate = 48000;
+    // patch.dac.Init(dac_config);
     patch.StartDac();
     patch.StartAudio(AudioCallback);
     int lastSendChannelA = 0, lastSendChannelB = 0;
-    int max=0;
     while(1)
     {
         button.Debounce();
@@ -177,40 +208,39 @@ int main(void)
         //patch.PrintLine("Print a float value: %d",  (int)(cvInArr[0]*100));
         // Quantize to semitones
         int indexes[2] = {0,0};
-        CalculateClosestNote(cvInArr,indexes);    
-        //frequencies[0] = powf(2.f, closestNotes[0]) * 55; //Hz
+        CalculateClosestNote(cvInArr,indexes);
+           
+        
         uint16_t cvOut1 = ConvertNoteToDacValue(scales[scaleIndex][indexes[0]]);
         uint16_t cvOut2 = ConvertNoteToDacValue(scales[scaleIndex][indexes[1]]);
-
-    
         
         //patch.PrintLine("cv2 out value: %d",  cvOut2);
         if(cvOut1 != lastSendChannelA)
         {
             lastSendChannelA = cvOut1;
-            patch.WriteCvOut(CV_OUT_2, scales[scaleIndex][indexes[0]]);
+            //prepare internal oscillator frequency
+            frequencies[0] = powf(2.f, scales[scaleIndex][indexes[0]]+0.25) * 55; //Hz
+
+            // float dacOut =(scales[scaleIndex][indexes[0]]-0.01)/1.006;
+            // patch.WriteCvOut(CV_OUT_1, dacOut);
 
             auto i2cResult = WriteMCP_Voltage(i2c_handle,cvOut1,lastSendChannelB);
-            if (i2cResult != I2CHandle::Result::OK) 
-            {
-            i2c_handle.Init(i2c_config);
-                //patch.Print("i2c error");
-            }
+            if (i2cResult != I2CHandle::Result::OK) i2c_handle.Init(i2c_config);
         }
 
         if(cvOut2 != lastSendChannelB)
         {
             lastSendChannelB = cvOut2;
-            patch.WriteCvOut(CV_OUT_1, scales[scaleIndex][indexes[1]]);
+
+            // float dacOut =(scales[scaleIndex][indexes[1]]-0.01)/1.006;
+            // patch.WriteCvOut(CV_OUT_2, dacOut);
 
             auto i2cResult = WriteMCP_Voltage(i2c_handle,lastSendChannelA,cvOut2);
-            if (i2cResult != I2CHandle::Result::OK) 
-            {
-            i2c_handle.Init(i2c_config);
-                //patch.Print("i2c error");
-            }
+            if (i2cResult != I2CHandle::Result::OK) i2c_handle.Init(i2c_config);
         }
         patch.Delay(2);
+
+
         // max++;
         // max = max%4;  
         // patch.WriteCvOut(CV_OUT_BOTH, (float)max);
@@ -255,7 +285,7 @@ uint16_t ConvertNoteToDacValue(float note){
 void UpdateControls()
 {
     patch.ProcessAllControls();
-    // osc[0].SetFreq(frequencies[0]);
+    osc[0].SetFreq(frequencies[0]);
     // osc[0].SetWaveform(Oscillator::WAVE_SAW);
 }
 
@@ -335,10 +365,11 @@ void writeGain(I2CHandle& i2c , I2CHandle::Config& config){
         
 void SetupOsc(float samplerate)
 {
-    for(int i = 0; i < 3; i++)
+    for(int i = 0; i < NUM_OSCILLATORS; i++)
     {
         osc[i].Init(samplerate);
         osc[i].SetAmp(.5);
+        osc[0].SetWaveform(Oscillator::WAVE_SIN);
     }
 }
 
