@@ -4,6 +4,7 @@
 #include <string>
 #include <cstdlib> // For rand() and srand()
 #include <ctime>   // For time()
+#include <cmath>   // For powf()
 
 using namespace daisy;
 using namespace daisysp;
@@ -15,9 +16,9 @@ static const float kKnobMax = 1023;
 static const uint32_t kBufferLengthSec = 15;
 static const uint32_t kSampleRate = 48000;
 static const size_t kBufferLengthSamples = kBufferLengthSec * kSampleRate;
-static float DSY_SDRAM_BSS buffer[2][kBufferLengthSamples]; // Double buffered for two channels
+static float DSY_SDRAM_BSS buffer[kBufferLengthSamples]; // Single channel buffer
 
-static sampler::SamplerPlayer samplerPlayer[2]; // Two sampler players for two channels
+static sampler::SamplerPlayer samplerPlayer; // Single sampler player
 // Structure to hold the dot positions
 struct Dot {
     int x;
@@ -25,10 +26,9 @@ struct Dot {
 };
 Dot sparklingDots[10];
 DaisyPatch hw;
-Parameter loopStart[2], loopLength[2];
-bool startOver[2] = {false, false};
-bool recordOn[2] = {false, false}; // Separate recording state for each channel
-int currentChannel = 0; // Channel selection state
+Parameter loopStart, loopLength;
+bool startOver = false;
+bool recordOn = false; // Single recording state
 
 void UpdateControls();
 void updateDisplay();
@@ -41,14 +41,11 @@ void AudioCallback(AudioHandle::InputBuffer in, AudioHandle::OutputBuffer out, s
     UpdateControls();
 
     for (size_t i = 0; i < size; ++i) {
-        // Process each channel separately
-        for (int ch = 0; ch < 2; ++ch) {
-            auto o = samplerPlayer[ch].Process(in[ch][i], startOver[ch]);
-            out[ch][i] = o; // Output to respective channel
-        }
+        // Process single channel
+        auto o = samplerPlayer.Process(in[0][i], startOver);
+        out[0][i] = o; // Output to left channel
+        out[1][i] = o; // Output to right channel (same signal)
     }
-
-    
 }
 
 int main(void)
@@ -56,13 +53,12 @@ int main(void)
     hw.Init();
     hw.seed.StartLog(false);
 
-    for (int ch = 0; ch < 2; ++ch) {
-        loopStart[ch].Init(hw.controls[ch * 2], 0, 1, Parameter::LINEAR);
-        loopLength[ch].Init(hw.controls[ch * 2 + 1], 0, 1, Parameter::EXPONENTIAL);
-        samplerPlayer[ch].Init(buffer[ch], kBufferLengthSamples);
-    }
+    loopStart.Init(hw.controls[0], 0, 1, Parameter::LINEAR);
+    loopLength.Init(hw.controls[1], 0, 1, Parameter::EXPONENTIAL);
+    // Note: We don't use Parameter for playbackSpeed, we read control directly
+    samplerPlayer.Init(buffer, kBufferLengthSamples);
 
-    std::string str = "Dual Sampler Player";
+    std::string str = "Granular Sampler";
     char* cstr = &str[0];
     hw.display.WriteString(cstr, Font_7x10, true);
     hw.display.Update();
@@ -92,34 +88,48 @@ void UpdateControls()
 {
     hw.ProcessAllControls();
     
-
-
-    currentChannel += hw.encoder.Increment();
-    currentChannel %= 2; // Wrap around if channel exceeds 1
-    if(currentChannel<0) currentChannel = 0;   
-    for (int ch = 0; ch < 2; ++ch) {
-
-        if (hw.gate_input[ch].Trig()) {
-            startOver[ch] = true;
-        } else {
-            startOver[ch] = false;
-        }
-
-        loopStart[ch].Process();
-        loopLength[ch].Process();
-
-        auto loop_start = loopStart[ch].Value();
-        auto loop_length = loopLength[ch].Value();
-
-        samplerPlayer[ch].SetLoop(loop_start, loop_length);
-        samplerPlayer[ch].SetRecording(recordOn[ch]);
-
-
-        
+    if (hw.gate_input[0].Trig()) {
+        startOver = true;
+    } else {
+        startOver = false;
     }
 
+    loopStart.Process();
+    loopLength.Process();
+    hw.controls[2].Process(); // Process control 3 directly
+
+    auto loop_start = loopStart.Value();
+    auto loop_length = loopLength.Value();
+    
+    float controlValue = hw.controls[2].Value(); // 0 to 1 (nominally 0V to 5V)
+    
+    // Two-stage calibration: accurate first octave, then adjust higher octaves
+    const float FIRST_OCTAVE_THRESHOLD = 0.2f; // First 20% of range = first octave
+    const float HIGH_OCTAVE_SCALE = 0.96f;     // Adjust this for higher octaves (try 0.9-1.05)
+    
+    float octaves;
+    
+    if (controlValue <= FIRST_OCTAVE_THRESHOLD) {
+        // First octave: use direct linear mapping (already accurate)
+        octaves = controlValue * 5.0f;
+    } else {
+        // Higher octaves: apply calibration scaling
+        // Keep first octave as-is, then scale the rest
+        float firstOctave = FIRST_OCTAVE_THRESHOLD * 5.0f; // = 1.0 octave
+        float remainingValue = controlValue - FIRST_OCTAVE_THRESHOLD;
+        float remainingOctaves = (remainingValue / (1.0f - FIRST_OCTAVE_THRESHOLD)) * 4.0f; // Remaining 4 octaves
+        octaves = firstOctave + (remainingOctaves * HIGH_OCTAVE_SCALE);
+    }
+    
+    // Apply exponential volt/octave conversion: speed = 2^octaves
+    float speed = powf(2.0f, octaves);
+
+    samplerPlayer.SetLoop(loop_start, loop_length);
+    samplerPlayer.SetPlaybackSpeed(speed);
+    samplerPlayer.SetRecording(recordOn);
+
     if (hw.encoder.RisingEdge()) {
-        recordOn[currentChannel] = !recordOn[currentChannel]; // Toggle recording for the selected channel
+        recordOn = !recordOn; // Toggle recording
     }
 }
 
@@ -137,65 +147,76 @@ void updateDisplay()
 
     const int displayWidth = 128;
     const int displayHeight = 64;
-    const int halfHeight = displayHeight / 2;
 
-    for (int ch = 0; ch < 2; ch++)
+    // Draw waveform
+    for (int i = 0; i < displayWidth; i++)
     {
-        int yOffset = ch * halfHeight;
-
-        for (int i = 0; i < displayWidth; i++)
+        size_t bufferIndex = i * (kBufferLengthSamples / displayWidth);
+        if (bufferIndex < kBufferLengthSamples)
         {
-            size_t bufferIndex = i * (kBufferLengthSamples / displayWidth);
-            if (bufferIndex < kBufferLengthSamples)
+            float sample = buffer[bufferIndex];
+            float avg = 0;
+
+            for (size_t x = 0; x < (kBufferLengthSamples / displayWidth); x++)
             {
-                float sample = buffer[ch][bufferIndex];
-                float avg = 0;
+                avg += abs(sample);
+            }
 
-                for (size_t x = 0; x < (kBufferLengthSamples / displayWidth); x++)
-                {
-                    avg += abs(sample);
-                }
+            avg = (avg / (kBufferLengthSamples / displayWidth)) * (displayHeight / 2);
 
-                avg = (avg / (kBufferLengthSamples / displayWidth)) * (halfHeight);
+            int y = static_cast<int>((sample * displayHeight / 4) + displayHeight / 2);
 
-                int y = static_cast<int>((sample * halfHeight / 2) + yOffset + halfHeight / 2);
-
-                if (y >= 0 && y < displayHeight)
-                {
-                    hw.display.DrawLine(i, yOffset + halfHeight / 2 + avg, i, yOffset + halfHeight / 2 - avg, true);
-                }
+            if (y >= 0 && y < displayHeight)
+            {
+                hw.display.DrawLine(i, displayHeight / 2 + avg, i, displayHeight / 2 - avg, true);
             }
         }
-
-        size_t loopStartPos = samplerPlayer[ch].GetLoopStartPosition();
-        size_t playheadPosition = (loopStartPos + samplerPlayer[ch].GetCurrentPosition()) % samplerPlayer[ch].GetBufferLength();
-        int playheadX = playheadPosition / (samplerPlayer[ch].GetBufferLength() / displayWidth);
-
-        if (playheadX < displayWidth)
-        {
-            hw.display.DrawLine(playheadX, yOffset, playheadX, yOffset + halfHeight, true);
-        }
-
-        int loopStartX = (loopStartPos / (samplerPlayer[ch].GetBufferLength() / displayWidth))%displayWidth;
-        int loopEndX = ((loopStartPos + samplerPlayer[ch].GetLoopLength()) / (samplerPlayer[ch].GetBufferLength() / displayWidth))%displayWidth;
-
-        if (loopStartX < displayWidth) {
-            hw.display.DrawLine(loopStartX, yOffset, loopStartX, yOffset + halfHeight, true);
-        }
-
-        if (loopEndX < displayWidth) {
-            hw.display.DrawLine(loopEndX, yOffset, loopEndX, yOffset + halfHeight, true);
-        }
-
-        hw.display.SetCursor(0, yOffset);
-        std::string str = (recordOn[ch] ? "Record " : "Play ") + std::to_string(ch + 1);//+ 
-        char* cstr = &str[0];
-        hw.display.WriteString(cstr, Font_6x8, true);
     }
-    hw.display.SetCursor(64, 0);
-    std::string str = "CH " + std::to_string(currentChannel);
+
+    // Draw playhead
+    size_t loopStartPos = samplerPlayer.GetLoopStartPosition();
+    size_t playheadPosition = (loopStartPos + samplerPlayer.GetCurrentPosition()) % samplerPlayer.GetBufferLength();
+    int playheadX = playheadPosition / (samplerPlayer.GetBufferLength() / displayWidth);
+
+    if (playheadX < displayWidth)
+    {
+        hw.display.DrawLine(playheadX, 0, playheadX, displayHeight, true);
+    }
+
+    // Draw loop markers
+    int loopStartX = (loopStartPos / (samplerPlayer.GetBufferLength() / displayWidth)) % displayWidth;
+    int loopEndX = ((loopStartPos + samplerPlayer.GetLoopLength()) / (samplerPlayer.GetBufferLength() / displayWidth)) % displayWidth;
+
+    if (loopStartX < displayWidth) {
+        hw.display.DrawLine(loopStartX, 0, loopStartX, displayHeight, true);
+    }
+
+    if (loopEndX < displayWidth) {
+        hw.display.DrawLine(loopEndX, 0, loopEndX, displayHeight, true);
+    }
+
+    // Display status
+    hw.display.SetCursor(0, 0);
+    std::string str = recordOn ? "Recording" : "Playing";
     char* cstr = &str[0];
     hw.display.WriteString(cstr, Font_6x8, true);
+
+    // Display control value as integer (0-1000) for debugging
+    hw.display.SetCursor(0, 10);
+    float controlValue = hw.controls[2].Value();
+    int ctrlInt = (int)(controlValue * 1000); // Convert to 0-1000 integer
+    std::string ctrlStr = "CV:" + std::to_string(ctrlInt);
+    char* ctrlCstr = &ctrlStr[0];
+    hw.display.WriteString(ctrlCstr, Font_6x8, true);
+    
+    // Display playback speed
+    hw.display.SetCursor(70, 0);
+    float octaves = controlValue * 5.0f;
+    float speed = powf(2.0f, octaves);
+    int speedInt = (int)(speed * 100); // Convert to integer for display
+    std::string speedStr = std::to_string(speedInt);
+    char* speedCstr = &speedStr[0];
+    hw.display.WriteString(speedCstr, Font_6x8, true);
 
     hw.display.Update();
 }

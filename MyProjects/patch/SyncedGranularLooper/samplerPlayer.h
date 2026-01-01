@@ -32,10 +32,15 @@ class SamplerPlayer {
 
       _is_loop_set = true;
     }
+
+    void SetPlaybackSpeed(float speed) {
+      _playback_speed = speed;
+    }
   
     float Process(float in, bool startOver) {
       // Handle the startOver request
       if (startOver) {
+        _play_head_float = 0.0f;
         _play_head = 0;
       }
 
@@ -73,15 +78,21 @@ class SamplerPlayer {
         attenuation = static_cast<float>(_loop_length - _play_head) / kFadeLength;
       }
 
-      // Read from the buffer
-      size_t play_pos = (_loop_start + _play_head) % _buffer_length;  
-      output = _buffer[play_pos] * attenuation;
+      // Read from the buffer with linear interpolation for smooth playback at different speeds
+      size_t play_pos = (_loop_start + _play_head) % _buffer_length;
+      size_t next_pos = (_loop_start + _play_head + 1) % _buffer_length;
+      float frac = _play_head_float - static_cast<float>(_play_head);
+      
+      output = (_buffer[play_pos] * (1.0f - frac) + _buffer[next_pos] * frac) * attenuation;
 
-      // Advance playhead
-      _play_head++;
+      // Advance playhead with speed multiplier
+      _play_head_float += _playback_speed;
+      _play_head = static_cast<size_t>(_play_head_float);
+      
       if (_play_head >= _loop_length) {
         // Reset the playhead to start a new loop
         _play_head = 0;
+        _play_head_float = 0.0f;
       }
 
       return output;
@@ -122,12 +133,15 @@ class SamplerPlayer {
     size_t _pending_loop_start  = 0;
 
     size_t _play_head = 0;
+    float _play_head_float = 0.0f;  // Float playhead for smooth speed control
     size_t _rec_head  = 0;
 
     size_t _rec_env_pos      = 0;
     int32_t _rec_env_pos_inc = 0;
     bool _is_empty  = true;
     bool _is_loop_set = false;
+    
+    float _playback_speed = 1.0f;  // Playback speed multiplier (0.5x to 2.0x)
 };
 
 };
