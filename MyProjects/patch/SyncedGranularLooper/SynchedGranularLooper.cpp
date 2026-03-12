@@ -26,7 +26,7 @@ struct Dot {
 };
 Dot sparklingDots[10];
 DaisyPatch hw;
-Parameter loopStart, loopLength;
+Parameter loopStart, loopLength, baseSpeed;
 bool startOver = false;
 bool recordOn = false; // Single recording state
 
@@ -55,7 +55,8 @@ int main(void)
 
     loopStart.Init(hw.controls[0], 0, 1, Parameter::LINEAR);
     loopLength.Init(hw.controls[1], 0, 1, Parameter::EXPONENTIAL);
-    // Note: We don't use Parameter for playbackSpeed, we read control directly
+    baseSpeed.Init(hw.controls[3], 0.5f, 2.0f, Parameter::EXPONENTIAL); // Knob 4 for base speed
+    // Note: We read control[2] directly for CV pitch control
     samplerPlayer.Init(buffer, kBufferLengthSamples);
 
     std::string str = "Granular Sampler";
@@ -96,10 +97,15 @@ void UpdateControls()
 
     loopStart.Process();
     loopLength.Process();
-    hw.controls[2].Process(); // Process control 3 directly
+    baseSpeed.Process();
+    hw.controls[2].Process(); // Process control 3 directly for CV
 
     auto loop_start = loopStart.Value();
     auto loop_length = loopLength.Value();
+    auto base_speed_value = baseSpeed.Value(); // 0.5x to 2.0x from knob 4
+    
+    // Convert base speed to octaves: 0.5x = -1 octave, 1.0x = 0 octaves, 2.0x = +1 octave
+    float base_octaves = log2f(base_speed_value);
     
     float controlValue = hw.controls[2].Value(); // 0 to 1 (nominally 0V to 5V)
     
@@ -107,25 +113,28 @@ void UpdateControls()
     const float FIRST_OCTAVE_THRESHOLD = 0.2f; // First 20% of range = first octave
     const float HIGH_OCTAVE_SCALE = 0.96f;     // Adjust this for higher octaves (try 0.9-1.05)
     
-    float octaves;
+    float cv_octaves;
     
     if (controlValue <= FIRST_OCTAVE_THRESHOLD) {
         // First octave: use direct linear mapping (already accurate)
-        octaves = controlValue * 5.0f;
+        cv_octaves = controlValue * 5.0f;
     } else {
         // Higher octaves: apply calibration scaling
         // Keep first octave as-is, then scale the rest
         float firstOctave = FIRST_OCTAVE_THRESHOLD * 5.0f; // = 1.0 octave
         float remainingValue = controlValue - FIRST_OCTAVE_THRESHOLD;
         float remainingOctaves = (remainingValue / (1.0f - FIRST_OCTAVE_THRESHOLD)) * 4.0f; // Remaining 4 octaves
-        octaves = firstOctave + (remainingOctaves * HIGH_OCTAVE_SCALE);
+        cv_octaves = firstOctave + (remainingOctaves * HIGH_OCTAVE_SCALE);
     }
     
-    // Apply exponential volt/octave conversion: speed = 2^octaves
-    float speed = powf(2.0f, octaves);
+    // Add base octaves to CV octaves (this preserves V/oct tracking!)
+    float total_octaves = base_octaves + cv_octaves;
+    
+    // Apply exponential conversion: speed = 2^octaves
+    float final_speed = powf(2.0f, total_octaves);
 
     samplerPlayer.SetLoop(loop_start, loop_length);
-    samplerPlayer.SetPlaybackSpeed(speed);
+    samplerPlayer.SetPlaybackSpeed(final_speed);
     samplerPlayer.SetRecording(recordOn);
 
     if (hw.encoder.RisingEdge()) {
@@ -201,19 +210,32 @@ void updateDisplay()
     char* cstr = &str[0];
     hw.display.WriteString(cstr, Font_6x8, true);
 
-    // Display control value as integer (0-1000) for debugging
+    // Display base speed multiplier
     hw.display.SetCursor(0, 10);
-    float controlValue = hw.controls[2].Value();
-    int ctrlInt = (int)(controlValue * 1000); // Convert to 0-1000 integer
-    std::string ctrlStr = "CV:" + std::to_string(ctrlInt);
-    char* ctrlCstr = &ctrlStr[0];
-    hw.display.WriteString(ctrlCstr, Font_6x8, true);
+    int baseSpeedInt = (int)(baseSpeed.Value() * 100);
+    std::string baseStr = "BS:" + std::to_string(baseSpeedInt);
+    char* baseCstr = &baseStr[0];
+    hw.display.WriteString(baseCstr, Font_6x8, true);
     
-    // Display playback speed
+    // Display final playback speed
     hw.display.SetCursor(70, 0);
-    float octaves = controlValue * 5.0f;
-    float speed = powf(2.0f, octaves);
-    int speedInt = (int)(speed * 100); // Convert to integer for display
+    float controlValue = hw.controls[2].Value();
+    float octaves;
+    const float FIRST_OCTAVE_THRESHOLD = 0.2f;
+    const float HIGH_OCTAVE_SCALE = 0.96f;
+    
+    if (controlValue <= FIRST_OCTAVE_THRESHOLD) {
+        octaves = controlValue * 5.0f;
+    } else {
+        float firstOctave = FIRST_OCTAVE_THRESHOLD * 5.0f;
+        float remainingValue = controlValue - FIRST_OCTAVE_THRESHOLD;
+        float remainingOctaves = (remainingValue / (1.0f - FIRST_OCTAVE_THRESHOLD)) * 4.0f;
+        octaves = firstOctave + (remainingOctaves * HIGH_OCTAVE_SCALE);
+    }
+    
+    float cv_speed = powf(2.0f, octaves);
+    float final_speed = baseSpeed.Value() * cv_speed;
+    int speedInt = (int)(final_speed * 100);
     std::string speedStr = std::to_string(speedInt);
     char* speedCstr = &speedStr[0];
     hw.display.WriteString(speedCstr, Font_6x8, true);
