@@ -24,11 +24,38 @@ class SamplerPlayer {
     }
 
     void SetLoop(const float loop_start, const float loop_length) {
-      // Set the start of the next loop
-      _pending_loop_start = static_cast<size_t>(loop_start * (_buffer_length - 1));
+      size_t new_loop_start = static_cast<size_t>(loop_start * (_buffer_length - 1));
+      size_t new_loop_length = std::max(kMinLoopLength, static_cast<size_t>(loop_length * _buffer_length));
 
-      // Set the length of the next loop
-      _pending_loop_length = std::max(kMinLoopLength, static_cast<size_t>(loop_length * _buffer_length));
+      // Jitter filter: ignore tiny changes (< 50 samples)
+      size_t start_diff = (new_loop_start > _loop_start)
+                              ? (new_loop_start - _loop_start)
+                              : (_loop_start - new_loop_start);
+      size_t length_diff = (new_loop_length > _loop_length)
+                               ? (new_loop_length - _loop_length)
+                               : (_loop_length - new_loop_length);
+
+      // Apply loop start immediately
+      if (start_diff >= kJitterFilterSamples) {
+        _jump_pending_start = new_loop_start;
+        _jump_pending_start_valid = true;
+        if (_jump_state == JumpState::None && _jump_cooldown == 0) {
+          _jump_state = JumpState::FadeOut;
+          _jump_fade_pos = 0;
+        }
+      }
+
+      // Apply loop length immediately
+      if (length_diff >= kJitterFilterSamples || _loop_length == 0) {
+        _loop_length = new_loop_length;
+      }
+
+      // Ensure playhead stays in range
+      if (_loop_length > 0 && _play_head >= _loop_length) {
+        _play_head = 0;
+        _play_head_float = 0.0f;
+        _jump_fade_pos = 0;
+      }
 
       _is_loop_set = true;
     }
@@ -40,8 +67,9 @@ class SamplerPlayer {
     float Process(float in, bool startOver) {
       // Handle the startOver request
       if (startOver) {
-        _play_head_float = 0.0f;
-        _play_head = 0;
+        _jump_pending_start_valid = false;
+        _jump_state = JumpState::FadeOut;
+        _jump_fade_pos = 0;
       }
 
       // Calculate iterator position on the record level ramp.
@@ -62,12 +90,6 @@ class SamplerPlayer {
         return 0;
       }
 
-      // Smooth transition when loop start changes
-      if (_play_head == 0) {
-        _loop_start = _pending_loop_start;
-        _loop_length = _pending_loop_length;
-      }
-
       // Playback with smooth fades
       float attenuation = 1.0f;
       float output = 0.0f;
@@ -78,12 +100,43 @@ class SamplerPlayer {
         attenuation = static_cast<float>(_loop_length - _play_head) / kFadeLength;
       }
 
-      // Read from the buffer with linear interpolation for smooth playback at different speeds
       size_t play_pos = (_loop_start + _play_head) % _buffer_length;
       size_t next_pos = (_loop_start + _play_head + 1) % _buffer_length;
       float frac = _play_head_float - static_cast<float>(_play_head);
-      
+
       output = (_buffer[play_pos] * (1.0f - frac) + _buffer[next_pos] * frac) * attenuation;
+
+      if (_jump_state == JumpState::FadeOut) {
+        float mix = 1.0f - (static_cast<float>(_jump_fade_pos)
+                            / static_cast<float>(kJumpFadeOutSamples));
+        if (mix < 0.0f) mix = 0.0f;
+        output *= mix;
+        _jump_fade_pos++;
+        if (_jump_fade_pos >= kJumpFadeOutSamples) {
+          if (_jump_pending_start_valid) {
+            _loop_start = _jump_pending_start;
+          }
+          _play_head = 0;
+          _play_head_float = 0.0f;
+          _jump_pending_start_valid = false;
+          _jump_state = JumpState::FadeIn;
+          _jump_fade_pos = 0;
+          _jump_cooldown = kJumpCooldownSamples;
+        }
+      } else if (_jump_state == JumpState::FadeIn) {
+        float mix = static_cast<float>(_jump_fade_pos)
+                    / static_cast<float>(kJumpFadeInSamples);
+        if (mix > 1.0f) mix = 1.0f;
+        output *= mix;
+        _jump_fade_pos++;
+        if (_jump_fade_pos >= kJumpFadeInSamples) {
+          _jump_state = JumpState::None;
+        }
+      }
+
+      if (_jump_cooldown > 0) {
+        _jump_cooldown--;
+      }
 
       // Advance playhead with speed multiplier
       _play_head_float += _playback_speed;
@@ -121,16 +174,20 @@ class SamplerPlayer {
 
 
   private:
-    static const size_t kFadeLength = 10;
+    static const size_t kFadeLength = 200;
     static const size_t kMinLoopLength = 2 * kFadeLength;
+    static const size_t kJitterFilterSamples = 400;
+    static const size_t kJumpFadeOutSamples = 128;
+    static const size_t kJumpFadeInSamples = 128;
+    static const size_t kJumpCooldownSamples = 2000;
+
+    enum class JumpState { None, FadeOut, FadeIn };
 
     float* _buffer;
 
     size_t _buffer_length       = 0;
     size_t _loop_length         = 0;
-    size_t _pending_loop_length = 0;
     size_t _loop_start          = 0;
-    size_t _pending_loop_start  = 0;
 
     size_t _play_head = 0;
     float _play_head_float = 0.0f;  // Float playhead for smooth speed control
@@ -140,6 +197,12 @@ class SamplerPlayer {
     int32_t _rec_env_pos_inc = 0;
     bool _is_empty  = true;
     bool _is_loop_set = false;
+
+    JumpState _jump_state = JumpState::None;
+    size_t _jump_fade_pos = 0;
+    size_t _jump_pending_start = 0;
+    bool _jump_pending_start_valid = false;
+    size_t _jump_cooldown = 0;
     
     float _playback_speed = 1.0f;  // Playback speed multiplier (0.5x to 2.0x)
 };
