@@ -19,6 +19,9 @@ class SamplerPlayer {
         if (_rec_env_pos_inc <= 0 && is_rec_on) {
             _rec_head = _play_head % _buffer_length; 
             _is_empty = false;
+            // When starting a new recording, set playhead to rec_head
+            _play_head = _rec_head;
+            _play_head_float = static_cast<float>(_rec_head);
         }
         _rec_env_pos_inc = is_rec_on ? 1 : -1;
     }
@@ -170,6 +173,22 @@ class SamplerPlayer {
 
     size_t GetBufferLength() const { // New method added
         return _buffer_length;
+    }
+
+    void ClearBuffer() {
+        memset(_buffer, 0, sizeof(float) * _buffer_length);
+        // Don't set _is_empty = true here.
+        // The buffer data is zeroed (no old audio bleeds through),
+        // but playback should keep running so new recorded audio
+        // is heard as soon as the playhead crosses the rec_head.
+    }
+
+    /// Call after externally loading data into the buffer (e.g. from SD card)
+    /// so the player knows it has valid audio to play.
+    void SetLoaded() {
+        _is_empty = false;
+        _play_head = 0;
+        _play_head_float = 0.0f;
     }
 
 

@@ -1,6 +1,7 @@
 #include "daisy_patch.h"
 #include "daisysp.h"
 #include "samplerPlayer.h"
+#include "sdStorage.h"
 #include <string>
 #include <cstdlib> // For rand() and srand()
 #include <ctime>   // For time()
@@ -19,6 +20,26 @@ static const size_t kBufferLengthSamples = kBufferLengthSec * kSampleRate;
 static float DSY_SDRAM_BSS buffer[kBufferLengthSamples]; // Single channel buffer
 
 static sampler::SamplerPlayer samplerPlayer; // Single sampler player
+
+// SD card storage
+static storage::SDStorage sdStorage;
+static bool sdInitialized = false;
+static uint32_t sdStatusDisplayTime = 0;
+static const uint32_t kStatusDisplayMs = 2000;
+static bool showSdStatus = false;
+
+// Two-layer UI
+enum class UIScreen { ModeSelect, Play, Load, Save };
+static UIScreen uiScreen = UIScreen::Play;
+static int modeSelectCursor = 0;   // 0=Play, 1=Load, 2=Save
+static int slotCursor = 0;         // 0..4 = slots, 5 = Exit
+static const int kNumSlots = 5;
+static const int kExitItem = kNumSlots; // index 5 = Exit
+
+// Encoder event accumulators (written in audio callback, read in main loop)
+static volatile int encoderAccum = 0;
+static volatile bool encoderPressed = false;
+
 // Structure to hold the dot positions
 struct Dot {
     int x;
@@ -59,8 +80,21 @@ int main(void)
     // Note: We read control[2] directly for CV pitch control
     samplerPlayer.Init(buffer, kBufferLengthSamples);
 
-    std::string str = "Granular Sampler";
-    char* cstr = &str[0];
+    // Initialize SD card (retry a few times — card needs time after power-on)
+    std::string str;
+    char* cstr;
+    hw.DelayMs(500); // let SD card power up
+    for (int attempt = 0; attempt < 3 && !sdInitialized; attempt++) {
+        sdInitialized = sdStorage.Init();
+        if (!sdInitialized) hw.DelayMs(250);
+    }
+    if (sdInitialized) {
+        str = "SD Card Ready";
+    } else {
+        sdStorage.UpdateErrorString();
+        str = sdStorage.GetStatusString();
+    }
+    cstr = &str[0];
     hw.display.WriteString(cstr, Font_7x10, true);
     hw.display.Update();
     hw.DelayMs(1000);
@@ -78,6 +112,149 @@ int main(void)
         if (currentTime - lastUpdateTime >= sparkleInterval) {
             lastUpdateTime = currentTime;
             updateSparklingDots();
+        }
+
+        // --- UI controls (processed outside audio callback) ---
+        if (sdInitialized) {
+            // Read and reset accumulated encoder events
+            int inc = encoderAccum;
+            encoderAccum = 0;
+            bool pressed = encoderPressed;
+            encoderPressed = false;
+
+            switch (uiScreen) {
+            case UIScreen::ModeSelect:
+                // Turn = cycle Play/Load/Save
+                if (inc != 0) {
+                    modeSelectCursor += inc;
+                    if (modeSelectCursor < 0) modeSelectCursor = 2;
+                    if (modeSelectCursor > 2) modeSelectCursor = 0;
+                }
+                // Press = enter selected mode
+                if (pressed) {
+                    if (modeSelectCursor == 0)      uiScreen = UIScreen::Play;
+                    else if (modeSelectCursor == 1) { uiScreen = UIScreen::Load; slotCursor = 0; }
+                    else                            { uiScreen = UIScreen::Save; slotCursor = 0; }
+                }
+                break;
+
+            case UIScreen::Play:
+                // Turn = exit back to mode select
+                if (inc != 0) {
+                    if (recordOn) {
+                        recordOn = false;
+                        samplerPlayer.SetRecording(false);
+                        // After stopping recording, check if buffer has nonzero data
+                        bool nonzero = false;
+                        for (size_t i = 0; i < kBufferLengthSamples; i += 128) {
+                            if (fabsf(buffer[i]) > 1e-5f) { nonzero = true; break; }
+                        }
+                        hw.display.Fill(false);
+                        hw.display.SetCursor(0, 30);
+                        hw.display.WriteString(const_cast<char*>(nonzero ? "REC OK" : "REC ZERO"), Font_7x10, true);
+                        hw.display.Update();
+                        hw.DelayMs(1000);
+                    }
+                    uiScreen = UIScreen::ModeSelect;
+                }
+                // Press = toggle recording
+                if (pressed) {
+                    if (!recordOn) {
+                        // Starting recording: clear buffer first
+                        samplerPlayer.ClearBuffer();
+                        // Show input sample value for debug
+                        float input_val = 0.0f;
+                        // Try to get a recent input sample (from buffer[0] if possible)
+                        // But buffer[0] is the audio buffer, not input. So show a message.
+                        hw.display.Fill(false);
+                        hw.display.SetCursor(0, 10);
+                        hw.display.WriteString(const_cast<char*>("REC STARTED"), Font_6x8, true);
+                        hw.display.SetCursor(0, 24);
+                        hw.display.WriteString(const_cast<char*>("Check input wiring!"), Font_6x8, true);
+                        hw.display.Update();
+                        hw.DelayMs(1000);
+                    }
+                    recordOn = !recordOn;
+                    samplerPlayer.SetRecording(recordOn);
+                    if (!recordOn) {
+                        // Just stopped recording: check buffer
+                        bool nonzero = false;
+                        float maxval = 0.0f;
+                        for (size_t i = 0; i < kBufferLengthSamples; i += 128) {
+                            float v = fabsf(buffer[i]);
+                            if (v > 1e-5f) nonzero = true;
+                            if (v > maxval) maxval = v;
+                        }
+                        hw.display.Fill(false);
+                        hw.display.SetCursor(0, 10);
+                        char msg[32];
+                        snprintf(msg, sizeof(msg), "%s L:%lu", nonzero ? "REC OK" : "REC ZERO", (unsigned long)samplerPlayer.GetLoopLength());
+                        hw.display.WriteString(msg, Font_6x8, true);
+                        hw.display.SetCursor(0, 24);
+                        snprintf(msg, sizeof(msg), "B0:%.3f M:%.3f", buffer[0], maxval);
+                        hw.display.WriteString(msg, Font_6x8, true);
+                        hw.display.Update();
+                        hw.DelayMs(2000);
+                    }
+                }
+                break;
+
+            case UIScreen::Load:
+                // Turn = cycle slots 0..4 + Exit
+                if (inc != 0) {
+                    slotCursor += inc;
+                    if (slotCursor < 0) slotCursor = kExitItem;
+                    if (slotCursor > kExitItem) slotCursor = 0;
+                }
+                // Press = load selected slot or exit
+                if (pressed) {
+                    if (slotCursor == kExitItem) {
+                        uiScreen = UIScreen::ModeSelect;
+                    } else if (sdStorage.SlotExists(slotCursor)) {
+                        size_t loaded = 0;
+                        hw.StopAudio();
+                        sdStorage.LoadFromSlot(buffer, kBufferLengthSamples,
+                                               slotCursor, loaded);
+                        hw.StartAudio(AudioCallback);
+                        if (loaded > 0) samplerPlayer.SetLoaded();
+                        sdStorage.UpdateErrorString();
+                        showSdStatus = true;
+                        sdStatusDisplayTime = currentTime;
+                        uiScreen = UIScreen::Play;
+                    }
+                }
+                break;
+
+            case UIScreen::Save:
+                // Turn = cycle slots 0..4 + Exit
+                if (inc != 0) {
+                    slotCursor += inc;
+                    if (slotCursor < 0) slotCursor = kExitItem;
+                    if (slotCursor > kExitItem) slotCursor = 0;
+                }
+                // Press = save to selected slot or exit
+                if (pressed) {
+                    if (slotCursor == kExitItem) {
+                        uiScreen = UIScreen::ModeSelect;
+                    } else {
+                        hw.StopAudio();
+                        sdStorage.SaveToSlot(buffer, kBufferLengthSamples,
+                                             slotCursor, kSampleRate);
+                        hw.StartAudio(AudioCallback);
+                        sdStorage.UpdateErrorString();
+                        showSdStatus = true;
+                        sdStatusDisplayTime = currentTime;
+                        uiScreen = UIScreen::Play;
+                    }
+                }
+                break;
+            }
+
+            // Auto-hide status after timeout
+            if (showSdStatus
+                && (currentTime - sdStatusDisplayTime > kStatusDisplayMs)) {
+                showSdStatus = false;
+            }
         }
 
         updateDisplay();
@@ -135,11 +312,12 @@ void UpdateControls()
 
     samplerPlayer.SetLoop(loop_start, loop_length);
     samplerPlayer.SetPlaybackSpeed(final_speed);
+
     samplerPlayer.SetRecording(recordOn);
 
-    if (hw.encoder.RisingEdge()) {
-        recordOn = !recordOn; // Toggle recording
-    }
+    // Capture encoder events for main loop consumption
+    encoderAccum += hw.encoder.Increment();
+    if (hw.encoder.RisingEdge()) encoderPressed = true;
 }
 
 void updateSparklingDots()
@@ -239,6 +417,64 @@ void updateDisplay()
     std::string speedStr = std::to_string(speedInt);
     char* speedCstr = &speedStr[0];
     hw.display.WriteString(speedCstr, Font_6x8, true);
+
+    // --- UI overlay ---
+    if (sdInitialized) {
+        switch (uiScreen) {
+        case UIScreen::ModeSelect: {
+            // Full-screen mode select menu
+            hw.display.Fill(false);
+            hw.display.SetCursor(20, 0);
+            hw.display.WriteString(const_cast<char*>("Select Mode"), Font_7x10, true);
+            const char* modes[] = {"Play", "Load", "Save"};
+            for (int i = 0; i < 3; i++) {
+                hw.display.SetCursor(20, 18 + i * 14);
+                char line[20];
+                snprintf(line, sizeof(line), "%s %s", (i == modeSelectCursor) ? ">" : " ", modes[i]);
+                hw.display.WriteString(line, Font_7x10, true);
+            }
+            break;
+        }
+        case UIScreen::Play:
+            // Show mode label + recording hint
+            hw.display.SetCursor(80, 0);
+            hw.display.WriteString(const_cast<char*>(recordOn ? "[REC]" : "Play"), Font_6x8, true);
+            hw.display.SetCursor(0, 56);
+            hw.display.WriteString(const_cast<char*>(recordOn ? "Press:Stop  Turn:Exit" : "Press:Rec   Turn:Exit"), Font_6x8, true);
+            if (showSdStatus) {
+                hw.display.SetCursor(0, 46);
+                hw.display.WriteString(const_cast<char*>(sdStorage.GetStatusString()), Font_6x8, true);
+            }
+            break;
+
+        case UIScreen::Load:
+        case UIScreen::Save: {
+            // Slot selection overlay on bottom half
+            bool isLoad = (uiScreen == UIScreen::Load);
+            hw.display.SetCursor(0, 30);
+            hw.display.WriteString(const_cast<char*>(isLoad ? "-- Load --" : "-- Save --"), Font_6x8, true);
+            // Draw slot items + Exit
+            for (int s = 0; s <= kExitItem; s++) {
+                int yPos = 40 + (s % 3) * 8;
+                int xPos = (s < 3) ? 0 : 64;
+                hw.display.SetCursor(xPos, yPos);
+                char item[16];
+                if (s < kNumSlots) {
+                    bool exists = sdStorage.SlotExists(s);
+                    snprintf(item, sizeof(item), "%s%d%s",
+                             (s == slotCursor) ? ">" : " ",
+                             s + 1,
+                             exists ? "*" : " ");
+                } else {
+                    snprintf(item, sizeof(item), "%sExit",
+                             (s == slotCursor) ? ">" : " ");
+                }
+                hw.display.WriteString(item, Font_6x8, true);
+            }
+            break;
+        }
+        }
+    }
 
     hw.display.Update();
 }
